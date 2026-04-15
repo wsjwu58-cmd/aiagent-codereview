@@ -1,0 +1,6 @@
+# 项目排除路径
+/code-review-api/target/
+/code-review-common/target/
+/code-review-core/target/
+/code-review-rag/target/
+/code-review-tools/target/

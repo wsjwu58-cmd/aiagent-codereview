@@ -1,0 +1,204 @@
+{
+  "groups": [
+    {
+      "name": "spring.ai.vectorstore.milvus",
+      "type": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client",
+      "type": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "spring.ai.vectorstore.milvus.auto-id",
+      "type": "java.lang.Boolean",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.ca-pem-path",
+      "type": "java.lang.String",
+      "description": "The ca.pem path for tls two-way authentication, only takes effect when \"secure\" is True.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.client-key-path",
+      "type": "java.lang.String",
+      "description": "The client.key path for tls two-way authentication, only takes effect when \"secure\" is True.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.client-pem-path",
+      "type": "java.lang.String",
+      "description": "The client.pem path for tls two-way authentication, only takes effect when \"secure\" is True.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.connect-timeout-ms",
+      "type": "java.lang.Long",
+      "description": "Connection timeout value of client channel. The timeout value must be greater than zero.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": 10000
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.host",
+      "type": "java.lang.String",
+      "description": "Milvus host name\/address.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": "localhost"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.idle-timeout-ms",
+      "type": "java.lang.Long",
+      "description": "Idle timeout value of client channel. The timeout value must be larger than zero.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.keep-alive-time-ms",
+      "type": "java.lang.Long",
+      "description": "Keep-alive time value of client channel. The keep-alive value must be greater than zero.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": 55000
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.keep-alive-timeout-ms",
+      "type": "java.lang.Long",
+      "description": "The keep-alive timeout value of client channel. The timeout value must be greater than zero.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": 20000
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.password",
+      "type": "java.lang.String",
+      "description": "The password for this connection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": "milvus"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.port",
+      "type": "java.lang.Integer",
+      "description": "Milvus the connection port. Value must be greater than zero and less than 65536.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": 19530
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.rpc-deadline-ms",
+      "type": "java.lang.Long",
+      "description": "Deadline for how long you are willing to wait for a reply from the server. With a deadline setting, the client will wait when encounter fast RPC fail caused by network fluctuations. The deadline value must be larger than or equal to zero. Default value is 0, deadline is disabled.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": 0
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.secure",
+      "type": "java.lang.Boolean",
+      "description": "Secure the authorization for this connection, set to True to enable TLS.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": false
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.server-name",
+      "type": "java.lang.String",
+      "description": "Sets the target name override for SSL host name checking, only takes effect when \"secure\" is True. Note: this value is passed to grpc.ssl_target_name_override",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.server-pem-path",
+      "type": "java.lang.String",
+      "description": "server.pem path for tls one-way authentication, only takes effect when \"secure\" is True.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.token",
+      "type": "java.lang.String",
+      "description": "Token serving as the key for identification and authentication purposes.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.uri",
+      "type": "java.lang.String",
+      "description": "The uri of Milvus instance",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.client.username",
+      "type": "java.lang.String",
+      "description": "The username and password for this connection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusServiceClientProperties",
+      "defaultValue": "root"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.collection-name",
+      "type": "java.lang.String",
+      "description": "Milvus collection name to store the vectors.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.content-field-name",
+      "type": "java.lang.String",
+      "description": "The content field name for the collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.database-name",
+      "type": "java.lang.String",
+      "description": "The name of the Milvus database to connect to.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.embedding-dimension",
+      "type": "java.lang.Integer",
+      "description": "The dimension of the vectors to be stored in the Milvus collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.embedding-field-name",
+      "type": "java.lang.String",
+      "description": "The embedding field name for the collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.id-field-name",
+      "type": "java.lang.String",
+      "description": "The ID field name for the collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.index-parameters",
+      "type": "java.lang.String",
+      "description": "The index parameters to be used for the Milvus collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties",
+      "defaultValue": "{\"nlist\":1024}"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.index-type",
+      "type": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties$MilvusIndexType",
+      "description": "The type of the index to be created for the Milvus collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties",
+      "defaultValue": "ivf-flat"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.initialize-schema",
+      "type": "java.lang.Boolean",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.metadata-field-name",
+      "type": "java.lang.String",
+      "description": "The metadata field name for the collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties"
+    },
+    {
+      "name": "spring.ai.vectorstore.milvus.metric-type",
+      "type": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties$MilvusMetricType",
+      "description": "The metric type to be used for the Milvus collection.",
+      "sourceType": "org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreProperties",
+      "defaultValue": "cosine"
+    }
+  ],
+  "hints": [],
+  "ignored": {
+    "properties": []
+  }
+}

@@ -1,0 +1,5 @@
+#NOTE: This is a Maven Resolver internal implementation file, its format can be changed without prior notice.
+#Mon Apr 13 11:16:36 CST 2026
+@default-alimaven-https\://maven.aliyun.com/repository/public/.lastUpdated=1776050168049
+https\://mirrors.huaweicloud.com/repository/maven/.lastUpdated=1776050196705
+https\://maven.aliyun.com/repository/public/.error=Could not transfer artifact org.springframework.boot\:spring-boot-dependencies\:pom\:3.2.5 from/to alimaven (https\://maven.aliyun.com/repository/public)\: E\:\\AIAgent\\.m2repo\\org\\springframework\\boot\\spring-boot-dependencies\\3.2.5\\spring-boot-dependencies-3.2.5.pom.16219715618781120820.tmp.1573721193851536713.tmp

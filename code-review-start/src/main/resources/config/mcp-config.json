@@ -1,0 +1,37 @@
+{
+  "tools": [
+    {
+      "name": "git_diff_fetcher",
+      "description": "获取Git仓库代码差异",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "repoUrl": {"type": "string"},
+          "branch": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "sonarqube_scanner",
+      "description": "调用SonarQube进行静态代码分析",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "projectKey": {"type": "string"},
+          "branch": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "code_refactorer",
+      "description": "根据审查建议自动重构代码",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "originalCode": {"type": "string"},
+          "suggestions": {"type": "array"}
+        }
+      }
+    }
+  ]
+}

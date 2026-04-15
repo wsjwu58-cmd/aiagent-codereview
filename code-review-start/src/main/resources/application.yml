@@ -1,0 +1,69 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: code-review-agent
+  datasource:
+    url: jdbc:mysql://localhost:3306/code_review_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:qwer1234}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:root}
+      password: ${REDIS_PASSWORD:qwer1234}
+  ai:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.siliconflow.cn}
+      api-key: ${OPENAI_API_KEY:sk-wotxcpcnxztkgrdqrzytqtmqxonxerxjuwgboptnplhrvbsi}
+      chat:
+        options:
+          model: Qwen/Qwen3-Coder-30B-A3B-Instruct
+      embedding:
+        base-url: ${OPENAI_BASE_URL:https://api.siliconflow.cn}
+        api-key: ${OPENAI_API_KEY:sk-wotxcpcnxztkgrdqrzytqtmqxonxerxjuwgboptnplhrvbsi}
+        options:
+          model: ${OPENAI_EMBEDDING_MODEL:BAAI/bge-large-zh-v1.5}
+    vectorstore:
+      milvus:
+        client:
+          host: ${MILVUS_HOST:192.168.141.128}
+          port: ${MILVUS_PORT:19530}
+          connect-timeout-ms: ${MILVUS_CONNECT_TIMEOUT_MS:10000}
+          rpc-deadline-ms: ${MILVUS_RPC_DEADLINE_MS:30000}
+          idle-timeout-ms: ${MILVUS_IDLE_TIMEOUT_MS:120000}
+        database-name: ${MILVUS_DATABASE:default}
+        collection-name: ${MILVUS_COLLECTION:code_review_knowledge}
+        embedding-dimension: ${OPENAI_EMBEDDING_DIMENSION:1024}
+        initialize-schema: ${MILVUS_INIT_SCHEMA:true}
+
+logging:
+  level:
+    root: info
+    com.heima.codereview: debug
+    com.heima.codereview.api.ai.SpringAiAlibabaAgentTextGenerator: debug
+    org.springframework.ai: debug
+    org.springframework.http.client: debug
+    okhttp3: debug
+    okio: debug
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %clr([%thread]){cyan} %clr(%-5level){FATAL=red, ERROR=red, WARN=yellow, INFO=green, DEBUG=green, TRACE=blue} %clr(%logger{36}){magenta} - %msg%n"
+
+code-review:
+  ai:
+    enabled: true
+    connect-timeout-ms: ${AI_CONNECT_TIMEOUT_MS:15000}
+    read-timeout-ms: ${AI_READ_TIMEOUT_MS:120000}
+    write-timeout-ms: ${AI_WRITE_TIMEOUT_MS:120000}
+    call-timeout-ms: ${AI_CALL_TIMEOUT_MS:180000}
+  sse:
+    heartbeat-interval-ms: 30000
+  memory:
+    window-size: 20
+
+sonar:
+  url: ${SONAR_URL:http://localhost:9000}
+  token: ${SONAR_TOKEN:sqa_748f9dc5d251260f2426f0481c5f65b7ed91d63a}
+  project-key: ${SONAR_PROJECT_KEY:wsjproject}
