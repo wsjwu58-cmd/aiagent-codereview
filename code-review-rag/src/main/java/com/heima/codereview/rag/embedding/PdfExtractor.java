@@ -29,7 +29,7 @@ public class PdfExtractor {
             }
             return pages;
         } catch (IOException e) {
-            throw new IllegalStateException("PDF 解析失败: " + e.getMessage(), e);
+            throw new IllegalStateException("PDF解析失败: " + e.getMessage(), e);
         }
     }
 

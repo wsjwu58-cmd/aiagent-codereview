@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -54,7 +55,7 @@ public class ReviewService {
     private final ReviewTaskPersistenceRepository reviewTaskPersistenceRepository;
     private final Executor reviewTaskExecutor;
 
-    private final Map<String, Boolean> cancelledSessions = new ConcurrentHashMap<>();
+    private final Map<String, Long> sessionCancelVersions = new ConcurrentHashMap<>();
 
     public ReviewService(FlowAgent flowAgent,
                          SseEmitterManager sseEmitterManager,
@@ -111,7 +112,8 @@ public class ReviewService {
                 "提交了一次代码审查请求，语言=" + safeLanguage(effectiveRequest.language()) + "，项目ID=" + safeText(effectiveRequest.projectId()),
                 System.currentTimeMillis()));
 
-        reviewTaskExecutor.execute(() -> executeReview(detail, effectiveRequest, codeContent));
+        long taskCancelVersion = currentCancelVersion(sessionId);
+        reviewTaskExecutor.execute(() -> executeReview(detail, effectiveRequest, codeContent, taskCancelVersion));
         return new ReviewTaskSummary(reviewId, sessionId, ReviewStatus.PROCESSING);
     }
 
@@ -120,7 +122,7 @@ public class ReviewService {
     }
 
     public void cancelReview(String sessionId) {
-        cancelledSessions.put(sessionId, true);
+        sessionCancelVersions.merge(sessionId, 1L, Long::sum);
         sseEmitterManager.send(sessionId, "cancelled", Map.of("reason", "user_cancelled"));
         reviewTaskPersistenceRepository.markCancelledBySession(sessionId);
         log.info("用户已取消会话审查。sessionId={}", sessionId);
@@ -130,15 +132,20 @@ public class ReviewService {
         return new ArrayList<>(reviewTaskPersistenceRepository.findAll());
     }
 
-    private void executeReview(ReviewTaskDetail detail, ReviewSubmitRequest request, String codeContent) {
+    private void executeReview(ReviewTaskDetail detail,
+                               ReviewSubmitRequest request,
+                               String codeContent,
+                               long taskCancelVersion) {
         String reviewId = detail.getReviewId();
         String sessionId = detail.getSessionId();
         long start = System.currentTimeMillis();
 
         try {
+            throwIfCancelled(sessionId, taskCancelVersion);
             String cacheKey = reviewResultCache.generateCacheKey(codeContent, safeLanguage(request.language()), "v1");
             var cachedReport = reviewResultCache.get(cacheKey);
             if (cachedReport != null) {
+                throwIfCancelled(sessionId, taskCancelVersion);
                 detail.setReport(cachedReport);
                 detail.setStatus(ReviewStatus.COMPLETED);
                 reviewTaskPersistenceRepository.saveCompletedTask(detail);
@@ -168,20 +175,31 @@ public class ReviewService {
             );
 
             AgentEventListener eventListener = (sid, eventName, data) -> {
-                if (Boolean.TRUE.equals(cancelledSessions.get(sid))) {
-                    throw new CancellationException("用户已取消任务");
-                }
+                throwIfCancelled(sid, taskCancelVersion);
                 sseEmitterManager.send(sid, eventName, data);
             };
 
             log.info("开始执行AI审查流程。reviewId={}, sessionId={}", reviewId, sessionId);
             FlowResult result = flowAgent.execute(new AgentExecutionContext(sessionId, context), eventListener);
+            throwIfCancelled(sessionId, taskCancelVersion);
             result.getReport().setSimilarCodeGroups(codeSimilarityDetector.detect(codeContent));
             detail.setReport(result.getReport());
             detail.setRefactoredCode(result.getRefactoredCode());
             detail.setAgentOutputs(result.getAgentOutputs());
             detail.setStatus(ReviewStatus.COMPLETED);
             reviewTaskPersistenceRepository.saveCompletedTask(detail);
+
+            Map<String, Object> reviewMetadata = new LinkedHashMap<>();
+            reviewMetadata.put("agentOutputs", result.getAgentOutputs());
+            reviewMetadata.put("score", result.getReport().getScore());
+            reviewMetadata.put("totalIssues", result.getReport().getTotalIssues());
+            reviewTaskPersistenceRepository.saveReviewHistory(
+                    reviewId,
+                    sessionId,
+                    request.projectId(),
+                    result.getSummary(),
+                    reviewMetadata
+            );
 
             reviewResultCache.put(cacheKey, result.getReport());
             reviewKnowledgeBase.saveRecord(
@@ -193,11 +211,7 @@ public class ReviewService {
                             request.projectId(),
                             System.currentTimeMillis()
                     ),
-                    Map.of(
-                            "agentOutputs", result.getAgentOutputs(),
-                            "score", result.getReport().getScore(),
-                            "totalIssues", result.getReport().getTotalIssues()
-                    )
+                    reviewMetadata
             );
             chatMemory.append(sessionId, new ChatMessage("assistant",
                     "代码审查已完成，reviewId=" + reviewId + "，评分=" + result.getReport().getScore()
@@ -399,6 +413,16 @@ public class ReviewService {
 
     private String safeText(String text) {
         return text == null ? "" : text;
+    }
+
+    private long currentCancelVersion(String sessionId) {
+        return sessionCancelVersions.getOrDefault(sessionId, 0L);
+    }
+
+    private void throwIfCancelled(String sessionId, long taskCancelVersion) {
+        if (currentCancelVersion(sessionId) > taskCancelVersion) {
+            throw new CancellationException("用户已取消任务");
+        }
     }
 
     private void rememberCodeContext(String sessionId, ReviewSubmitRequest request, String codeContent) {

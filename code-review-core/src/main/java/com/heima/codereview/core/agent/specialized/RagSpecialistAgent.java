@@ -1,6 +1,8 @@
 package com.heima.codereview.core.agent.specialized;
 
 import com.heima.codereview.core.agent.AgentTextGenerator;
+import com.heima.codereview.core.agent.SpecialistAgent;
+import com.heima.codereview.core.agent.planning.IntentType;
 import com.heima.codereview.core.agent.react.ReactContext;
 import com.heima.codereview.core.agent.react.ReactState;
 import com.heima.codereview.core.agent.react.ToolCallResult;
@@ -12,7 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
-public class RagSpecialistAgent extends SpecializedAgent {
+public class RagSpecialistAgent extends SpecialistAgent {
 
     public RagSpecialistAgent(AgentTextGenerator textGenerator,
                               ObjectProvider<McpToolExecutor> toolExecutorProvider,
@@ -28,6 +30,16 @@ public class RagSpecialistAgent extends SpecializedAgent {
     @Override
     public String getName() {
         return "RAG Specialist";
+    }
+
+    @Override
+    public String specialty() {
+        return "knowledge";
+    }
+
+    @Override
+    public List<IntentType> supportedIntents() {
+        return List.of(IntentType.KNOWLEDGE_RETRIEVAL, IntentType.DOCUMENTATION_GENERATION);
     }
 
     @Override

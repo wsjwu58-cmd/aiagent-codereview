@@ -26,6 +26,7 @@ import com.heima.codereview.common.persistence.mapper.ReviewTaskMapper;
 import com.heima.codereview.common.persistence.mapper.SimilarCodeBlockMapper;
 import com.heima.codereview.common.persistence.mapper.SimilarCodeGroupMapper;
 import com.heima.codereview.common.utils.IdUtils;
+import com.heima.codereview.rag.knowledge.ReviewKnowledgeBase;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,6 +48,7 @@ public class ReviewTaskPersistenceRepository {
     private final SimilarCodeBlockMapper similarCodeBlockMapper;
     private final ReviewHistoryMapper reviewHistoryMapper;
     private final ObjectMapper objectMapper;
+    private final ReviewKnowledgeBase reviewKnowledgeBase;
 
     public ReviewTaskPersistenceRepository(ReviewTaskMapper reviewTaskMapper,
                                            ReviewIssueMapper reviewIssueMapper,
@@ -54,7 +56,8 @@ public class ReviewTaskPersistenceRepository {
                                            SimilarCodeGroupMapper similarCodeGroupMapper,
                                            SimilarCodeBlockMapper similarCodeBlockMapper,
                                            ReviewHistoryMapper reviewHistoryMapper,
-                                           ObjectMapper objectMapper) {
+                                           ObjectMapper objectMapper,
+                                           ReviewKnowledgeBase reviewKnowledgeBase) {
         this.reviewTaskMapper = reviewTaskMapper;
         this.reviewIssueMapper = reviewIssueMapper;
         this.reviewSuggestionMapper = reviewSuggestionMapper;
@@ -62,6 +65,7 @@ public class ReviewTaskPersistenceRepository {
         this.similarCodeBlockMapper = similarCodeBlockMapper;
         this.reviewHistoryMapper = reviewHistoryMapper;
         this.objectMapper = objectMapper;
+        this.reviewKnowledgeBase = reviewKnowledgeBase;
     }
 
     public void createTask(ReviewTaskDetail detail, ReviewSubmitRequest request) {
@@ -116,6 +120,15 @@ public class ReviewTaskPersistenceRepository {
     }
 
     @Transactional
+    public void deleteByReviewId(String reviewId) {
+        clearChildren(reviewId);
+        reviewHistoryMapper.delete(new LambdaQueryWrapper<ReviewHistoryDO>()
+                .eq(ReviewHistoryDO::getReviewId, reviewId));
+        reviewTaskMapper.delete(new LambdaQueryWrapper<ReviewTaskDO>()
+                .eq(ReviewTaskDO::getReviewId, reviewId));
+    }
+
+    @Transactional
     public void saveCompletedTask(ReviewTaskDetail detail) {
         ReviewReport report = detail.getReport();
         reviewTaskMapper.update(null, new LambdaUpdateWrapper<ReviewTaskDO>()
@@ -134,6 +147,38 @@ public class ReviewTaskPersistenceRepository {
         saveIssues(detail.getReviewId(), report.getIssues());
         saveSuggestions(detail.getReviewId(), report.getSuggestions());
         saveSimilarGroups(detail.getReviewId(), report.getSimilarCodeGroups());
+    }
+
+    public void saveReviewHistory(String reviewId,
+                                  String sessionId,
+                                  String projectId,
+                                  String summary,
+                                  Map<String, Object> metadata) {
+        String metadataJson = writeMetadata(metadata);
+        ReviewHistoryDO history = reviewHistoryMapper.selectOne(new LambdaQueryWrapper<ReviewHistoryDO>()
+                .eq(ReviewHistoryDO::getReviewId, reviewId)
+                .orderByDesc(ReviewHistoryDO::getCreatedAt)
+                .last("limit 1"));
+        if (history == null) {
+            ReviewHistoryDO entity = new ReviewHistoryDO();
+            entity.setRecordId(IdUtils.withPrefix("history"));
+            entity.setReviewId(reviewId);
+            entity.setSessionId(sessionId);
+            entity.setProjectId(projectId);
+            entity.setSummary(summary);
+            entity.setEmbeddingModel("");
+            entity.setEmbeddingDim(0);
+            entity.setMetadata(metadataJson);
+            entity.setCreatedAt(LocalDateTime.now());
+            reviewHistoryMapper.insert(entity);
+            return;
+        }
+        reviewHistoryMapper.update(null, new LambdaUpdateWrapper<ReviewHistoryDO>()
+                .eq(ReviewHistoryDO::getId, history.getId())
+                .set(ReviewHistoryDO::getSessionId, sessionId)
+                .set(ReviewHistoryDO::getProjectId, projectId)
+                .set(ReviewHistoryDO::getSummary, summary)
+                .set(ReviewHistoryDO::getMetadata, metadataJson));
     }
 
     private void clearChildren(String reviewId) {
@@ -178,43 +223,44 @@ public class ReviewTaskPersistenceRepository {
     }
 
     private void saveSimilarGroups(String reviewId, List<SimilarCodeGroup> groups) {
+        if (groups == null || groups.isEmpty()) {
+            return;
+        }
+        int index = 1;
         for (SimilarCodeGroup group : groups) {
+            String storageGroupId = buildStorageGroupId(reviewId, group.groupId(), index++);
             SimilarCodeGroupDO groupEntity = new SimilarCodeGroupDO();
-            groupEntity.setGroupId(group.groupId());
+            groupEntity.setGroupId(storageGroupId);
             groupEntity.setReviewId(reviewId);
             groupEntity.setSimilarity(BigDecimal.valueOf(group.similarity()));
             similarCodeGroupMapper.insert(groupEntity);
 
-            for (String block : group.codeBlocks()) {
+            List<String> codeBlocks = group.codeBlocks() == null ? List.of() : group.codeBlocks();
+            for (String block : codeBlocks) {
                 SimilarCodeBlockDO blockEntity = new SimilarCodeBlockDO();
-                blockEntity.setGroupId(group.groupId());
+                blockEntity.setGroupId(storageGroupId);
                 blockEntity.setBlockContent(block);
                 similarCodeBlockMapper.insert(blockEntity);
             }
         }
     }
 
+    private String buildStorageGroupId(String reviewId, String groupId, int index) {
+        String safeGroupId = groupId == null || groupId.isBlank() ? "group-" + index : groupId;
+        if (safeGroupId.length() > 32) {
+            safeGroupId = "group-" + index;
+        }
+        return reviewId + "-" + safeGroupId;
+    }
+
     public Map<String, String> loadAgentOutputs(String reviewId) {
-        ReviewHistoryDO history = reviewHistoryMapper.selectOne(new LambdaQueryWrapper<ReviewHistoryDO>()
-                .eq(ReviewHistoryDO::getReviewId, reviewId)
-                .orderByDesc(ReviewHistoryDO::getCreatedAt)
-                .last("limit 1"));
-        if (history == null || history.getMetadata() == null || history.getMetadata().isBlank()) {
-            return Map.of();
+        Map<String, String> historyOutputs = extractAgentOutputs(loadHistoryMetadata(reviewId));
+        if (!historyOutputs.isEmpty()) {
+            return historyOutputs;
         }
-        try {
-            Map<String, Object> metadata = objectMapper.readValue(history.getMetadata(), new TypeReference<>() {
-            });
-            Object outputs = metadata.get("agentOutputs");
-            if (!(outputs instanceof Map<?, ?> outputMap)) {
-                return Map.of();
-            }
-            Map<String, String> result = new HashMap<>();
-            outputMap.forEach((key, value) -> result.put(String.valueOf(key), value == null ? "" : String.valueOf(value)));
-            return result;
-        } catch (Exception e) {
-            return Map.of();
-        }
+        return reviewKnowledgeBase.findMetadataByReviewId(reviewId)
+                .map(this::extractAgentOutputs)
+                .orElse(Map.of());
     }
 
     private ReviewTaskDetail toDetail(ReviewTaskDO task) {
@@ -240,6 +286,43 @@ public class ReviewTaskPersistenceRepository {
         report.setLowCount((int) report.getIssues().stream().filter(item -> "LOW".equals(item.severity())).count());
         detail.setReport(report);
         return detail;
+    }
+
+    private Map<String, Object> loadHistoryMetadata(String reviewId) {
+        ReviewHistoryDO history = reviewHistoryMapper.selectOne(new LambdaQueryWrapper<ReviewHistoryDO>()
+                .eq(ReviewHistoryDO::getReviewId, reviewId)
+                .orderByDesc(ReviewHistoryDO::getCreatedAt)
+                .last("limit 1"));
+        if (history == null || history.getMetadata() == null || history.getMetadata().isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(history.getMetadata(), new TypeReference<>() {
+            });
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private Map<String, String> extractAgentOutputs(Map<String, Object> metadata) {
+        if (metadata == null || metadata.isEmpty()) {
+            return Map.of();
+        }
+        Object outputs = metadata.get("agentOutputs");
+        if (!(outputs instanceof Map<?, ?> outputMap)) {
+            return Map.of();
+        }
+        Map<String, String> result = new HashMap<>();
+        outputMap.forEach((key, value) -> result.put(String.valueOf(key), value == null ? "" : String.valueOf(value)));
+        return result;
+    }
+
+    private String writeMetadata(Map<String, Object> metadata) {
+        try {
+            return objectMapper.writeValueAsString(metadata == null ? Map.of() : metadata);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     private List<ReviewIssue> loadIssues(String reviewId) {

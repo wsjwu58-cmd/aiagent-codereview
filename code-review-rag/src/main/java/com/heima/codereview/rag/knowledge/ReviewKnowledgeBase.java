@@ -38,4 +38,12 @@ public class ReviewKnowledgeBase {
     public Optional<Map<String, Object>> findMetadataByReviewId(String reviewId) {
         return milvusRepository.findMetadataByReviewId(reviewId);
     }
+
+    public List<ReviewRecord> cachedRecords(String projectId, String sessionId) {
+        return milvusRepository.cachedRecords(projectId, sessionId);
+    }
+
+    public void deleteByReviewId(String reviewId) {
+        milvusRepository.deleteByReviewId(reviewId);
+    }
 }

@@ -10,7 +10,7 @@ public class InputOutputRouter {
             return "FlowAgent";
         }
         if ("chat".equalsIgnoreCase(inputType)) {
-            return "AdvisorAgent";
+            return "FlowAgent";
         }
         return "FlowAgent";
     }

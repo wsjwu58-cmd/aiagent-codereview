@@ -33,6 +33,12 @@ public record ReactState(
                 && input.equals(item.input()));
     }
 
+    public long toolCallCount(String toolName) {
+        return toolResults.stream()
+                .filter(item -> item != null && toolName.equals(item.toolName()))
+                .count();
+    }
+
     public boolean isStuck() {
         return consecutiveNoProgress >= 2;
     }

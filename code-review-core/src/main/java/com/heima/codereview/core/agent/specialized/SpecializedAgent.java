@@ -19,10 +19,49 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public abstract class SpecializedAgent extends BaseAgent {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final List<String> CONTEXT_BOUND_PARAM_KEYS = List.of("sessionId", "projectId", "repoUrl", "branch", "language");
+    private static final Pattern WINDOWS_PATH_PATTERN =
+            Pattern.compile("([A-Za-z]:[\\\\/][^\\s\"',;]+(?:[\\\\/][^\\s\"',;]+)*)");
+    private static final Pattern UNIX_PATH_PATTERN =
+            Pattern.compile("((?:/[^\\s\"',;]+)+)");
+    private static final List<String> DEFAULT_LOCAL_FILE_FILTERS = List.of(
+            "*.java",
+            "*.kt",
+            "*.xml",
+            "*.yml",
+            "*.yaml",
+            "*.properties",
+            "*.sql",
+            "*.js",
+            "*.jsx",
+            "*.ts",
+            "*.tsx",
+            "*.vue",
+            "*.py",
+            "*.go",
+            "*.md"
+    );
+    private static final List<String> LOW_YIELD_RETRIEVAL_TOOLS = List.of(
+            "review_history_search",
+            "session_memory_read",
+            "chat_history_search",
+            "norm_search",
+            "web_search",
+            "git_diff_fetch",
+            "file_operation",
+            "code_search"
+    );
+    private static final int MAX_PLANNING_TOOL_RESULTS = 4;
+    private static final int MAX_PLANNING_TOOL_RESULT_LENGTH = 320;
+    private static final int MAX_TOOL_QUERY_LENGTH = 320;
+    private static final int MAX_RETRIEVAL_QUERY_LENGTH = 240;
+    private static final int MAX_TOOL_RESULT_WINDOW = 5;
 
     protected final AgentTextGenerator textGenerator;
     private final McpToolExecutor mcpToolExecutor;
@@ -79,14 +118,11 @@ public abstract class SpecializedAgent extends BaseAgent {
                                    String userMessage,
                                    ReactContext context,
                                    ReactState state) {
-        Map<String, Object> params = new LinkedHashMap<>(buildDefaultToolParams(toolName, userMessage, context, state));
-        if (requestedParams != null) {
-            requestedParams.forEach((key, value) -> {
-                if (value != null && !(value instanceof String text && text.isBlank())) {
-                    params.put(key, value);
-                }
-            });
-        }
+        Map<String, Object> params = mergeToolParams(
+                toolName,
+                buildDefaultToolParams(toolName, userMessage, context, state),
+                requestedParams
+        );
         String input = formatParams(params);
         if (mcpToolExecutor == null) {
             return new ToolCallResult(toolName, input, "Tool executor is unavailable in the current runtime.");
@@ -136,11 +172,22 @@ public abstract class SpecializedAgent extends BaseAgent {
                 [Observed Tools]
                 %s
 
-                Synthesize the final answer in Simplified Chinese.
+                Synthesize the final answer in Simplified Chinese using strict Markdown.
+                Formatting rules:
+                - Every heading, bullet, numbered item, and bold label must start on its own line.
+                - Leave a blank line between headings, paragraphs, and lists.
+                - Never place markdown markers such as ##, ###, -, 1., or **label**: in the middle of an existing paragraph.
                 Keep the structure:
-                1. Findings
-                2. Evidence
-                3. Recommended next actions
+                ## Findings
+                ### 1. ...
+                - 问题描述: ...
+                - 证据: ...
+
+                ## Evidence
+                - ...
+
+                ## Recommended Next Actions
+                - ...
 
                 When code issues are found, also provide a concrete refactoring suggestion and a refactored code snippet.
                 """.formatted(
@@ -182,23 +229,40 @@ public abstract class SpecializedAgent extends BaseAgent {
                                                          String userMessage,
                                                          ReactContext context,
                                                          ReactState state) {
+        String localPath = extractCandidatePath(userMessage);
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("query", safe(userMessage));
+        params.put("path", localPath);
+        params.put("action", "list");
+        params.put("keyword", safe(userMessage));
+        params.put("pattern", extractSearchPattern(userMessage, localPath));
+        params.put("filters", DEFAULT_LOCAL_FILE_FILTERS);
+        params.put("content", "");
         params.put("projectId", safe(context.conversationContext().projectId()));
         params.put("sessionId", safe(context.conversationContext().sessionId()));
         params.put("repoUrl", safe(context.conversationContext().repoUrl()));
         params.put("branch", safe(context.conversationContext().branch()));
         params.put("language", safe(context.conversationContext().language()));
-        params.put("projectKey", safe(context.conversationContext().projectId()));
         params.put("topK", 4);
         params.put("limit", 4);
+        return filterToolParams(toolName, params);
+    }
+
+    private Map<String, Object> filterToolParams(String toolName, Map<String, Object> params) {
         return switch (toolName) {
             case "git_diff_fetch" -> keepOnly(params, "repoUrl", "branch", "language");
             case "review_history_search" -> keepOnly(params, "query", "projectId", "sessionId", "topK");
             case "session_memory_read" -> keepOnly(params, "sessionId");
             case "chat_history_search" -> keepOnly(params, "query", "sessionId", "topK");
             case "norm_search" -> keepOnly(params, "query", "projectId", "limit");
-            case "sonar_scan" -> keepOnly(params, "projectKey", "branch");
+            case "file_operation" -> keepOnly(params, "repoUrl", "path", "action", "keyword", "limit");
+            case "local_file_list" -> keepOnly(params, "path", "filters");
+            case "local_file_read" -> keepOnly(params, "path");
+            case "local_file_write" -> keepOnly(params, "path", "content");
+            case "local_file_search" -> keepOnly(params, "path", "pattern", "filters");
+            case "local_file_delete" -> keepOnly(params, "path");
+            case "code_search" -> keepOnly(params, "query", "repoUrl", "language", "limit");
+            case "web_search" -> keepOnly(params, "query", "limit");
             default -> params;
         };
     }
@@ -207,8 +271,15 @@ public abstract class SpecializedAgent extends BaseAgent {
                                     String userMessage,
                                     ReactContext context,
                                     ReactState state) {
+        if (isLowYieldRetrievalTool(toolName) && hasAnyLowYieldRetrievalCall(state)) {
+            return Integer.MIN_VALUE;
+        }
+
         int score = preferredToolNames().contains(toolName) ? 20 : 0;
         String normalized = safe(userMessage).toLowerCase();
+        String localPath = extractCandidatePath(userMessage);
+        String localSearchPattern = extractSearchPattern(userMessage, localPath);
+        boolean hasLocalPath = !localPath.isBlank();
         if ("git_diff_fetch".equals(toolName)
                 && !state.hasToolCall(toolName)
                 && !safe(context.conversationContext().repoUrl()).isBlank()
@@ -236,15 +307,59 @@ public abstract class SpecializedAgent extends BaseAgent {
                 || specialistId().contains("rag"))) {
             score += 70;
         }
-        if ("sonar_scan".equals(toolName)
+        if ("file_operation".equals(toolName)
                 && !state.hasToolCall(toolName)
-                && !safe(context.conversationContext().projectId()).isBlank()
-                && (specialistId().contains("security")
-                || specialistId().contains("performance")
-                || containsAny(normalized, "security", "performance", "vulnerability", "bottleneck"))) {
-            score += 50;
+                && !safe(context.conversationContext().repoUrl()).isBlank()
+                && containsAny(normalized, "file", "path", "目录", "文件", "read", "查看", "列出")) {
+            score += 65;
+        }
+        if ("local_file_list".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && hasLocalPath
+                && containsAny(normalized, "folder", "directory", "dir", "list", "scan", "tree", "local", "目录", "列出", "扫描")) {
+            score += 80;
+        }
+        if ("local_file_read".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && hasLocalPath
+                && (looksLikeFilePath(localPath)
+                || containsAny(normalized, "read", "open", "show", "view", "cat", "查看", "读取", "打开", "内容"))) {
+            score += 90;
+        }
+        if ("local_file_search".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && hasLocalPath
+                && !localSearchPattern.isBlank()
+                && containsAny(normalized, "search", "find", "grep", "keyword", "pattern", "lookup", "搜索", "查找", "匹配")) {
+            score += 85;
+        }
+        if ("local_file_write".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && hasLocalPath
+                && containsAny(normalized, "write", "overwrite", "update file", "modify file", "create file", "写入", "覆盖", "修改文件", "创建文件")) {
+            score += 55;
+        }
+        if ("local_file_delete".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && hasLocalPath
+                && containsAny(normalized, "delete", "remove file", "unlink", "删除", "移除")) {
+            score += 45;
+        }
+        if ("code_search".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && !safe(context.conversationContext().repoUrl()).isBlank()
+                && containsAny(normalized, "class", "method", "search", "where", "调用", "实现", "查找")) {
+            score += 70;
+        }
+        if ("web_search".equals(toolName)
+                && !state.hasToolCall(toolName)
+                && containsAny(normalized, "official", "docs", "document", "stackoverflow", "官网", "文档", "资料")) {
+            score += 45;
         }
         if (state.hasToolCall(toolName, formatParams(buildDefaultToolParams(toolName, userMessage, context, state)))) {
+            return Integer.MIN_VALUE;
+        }
+        if (isLowYieldRetrievalTool(toolName) && state.toolCallCount(toolName) > 0) {
             return Integer.MIN_VALUE;
         }
         return score;
@@ -266,6 +381,18 @@ public abstract class SpecializedAgent extends BaseAgent {
                 .map(item -> item.toolName() + " => " + safe(item.output()))
                 .reduce((left, right) -> left + "\n" + right)
                 .orElse("N/A");
+    }
+
+    private String formatPlanningToolResults(List<ToolCallResult> toolResults) {
+        if (toolResults == null || toolResults.isEmpty()) {
+            return "N/A";
+        }
+        int start = Math.max(0, toolResults.size() - MAX_PLANNING_TOOL_RESULTS);
+        return toolResults.subList(start, toolResults.size()).stream()
+                .filter(Objects::nonNull)
+                .map(item -> "- " + item.toolName() + " => "
+                        + shorten(safe(item.output()).replace("\n", " "), MAX_PLANNING_TOOL_RESULT_LENGTH))
+                .collect(Collectors.joining("\n"));
     }
 
     protected boolean containsAny(String text, String... keywords) {
@@ -326,6 +453,20 @@ public abstract class SpecializedAgent extends BaseAgent {
                 [Available Tools]
                 %s
 
+                Planning rules (STRICT - must follow):
+                1. PRIORITY: For code review tasks, you MUST first call norm_search to retrieve project standards before analyzing code.
+                2. EXISTING DATA: Check [Observed Tool Results] first. If git_diff_fetch already returned code/diff, do NOT call it again.
+                3. NO REPEAT: You MUST NOT call any tool that was already called in previous iterations.
+                4. ONE TOOL: Each tool can only be called ONCE per session.
+                5. REUSE: If you need data that was already retrieved, use the existing results instead of re-fetching.
+                6. FINISH if: The provided code or current evidence is already enough to analyze the issue.
+                7. Never override sessionId, projectId, repoUrl, branch, or language from the current context.
+
+                Tool selection priority for review tasks:
+                - norm_search (MUST be called first for review tasks)
+                - review_history_search (optional, for historical patterns)
+                - Then analysis tools if norms are already retrieved
+
                 Output JSON only:
                 {
                   "thought": "...",
@@ -339,7 +480,7 @@ public abstract class SpecializedAgent extends BaseAgent {
                 safe(userMessage),
                 state.iteration(),
                 context.conversationContext().repositorySummary(),
-                formatToolResults(state.toolResults()),
+                formatPlanningToolResults(state.toolResults()),
                 formatToolDefinitions(tools)
         );
 
@@ -369,11 +510,19 @@ public abstract class SpecializedAgent extends BaseAgent {
                 if (tools.stream().noneMatch(tool -> tool.name().equals(toolName))) {
                     return null;
                 }
-                Map<String, Object> params = buildDefaultToolParams(toolName, userMessage, context, state);
+                if (shouldStopAfterRepeatedRetrieval(toolName, state)) {
+                    return ReactDecision.finish(thought, "", "repeated_low_yield_retrieval");
+                }
+                Map<String, Object> requestedParams = new LinkedHashMap<>();
                 JsonNode paramsNode = node.path("params");
                 if (paramsNode.isObject()) {
-                    paramsNode.fields().forEachRemaining(entry -> params.put(entry.getKey(), jsonValue(entry.getValue())));
+                    paramsNode.fields().forEachRemaining(entry -> requestedParams.put(entry.getKey(), jsonValue(entry.getValue())));
                 }
+                Map<String, Object> params = mergeToolParams(
+                        toolName,
+                        buildDefaultToolParams(toolName, userMessage, context, state),
+                        requestedParams
+                );
                 return ReactDecision.tool(thought, toolName, params);
             }
             if ("FINISH".equalsIgnoreCase(action)) {
@@ -418,6 +567,173 @@ public abstract class SpecializedAgent extends BaseAgent {
         generationContext.put("language", safe(context.conversationContext().language()));
         generationContext.put("scene", specialistId());
         return generationContext;
+    }
+
+    private Map<String, Object> mergeToolParams(String toolName,
+                                                Map<String, Object> baseParams,
+                                                Map<String, Object> requestedParams) {
+        Map<String, Object> params = new LinkedHashMap<>(baseParams);
+        if (requestedParams != null) {
+            requestedParams.forEach((key, value) -> {
+                Object normalized = normalizeToolParam(toolName, key, value);
+                if (normalized != null) {
+                    params.put(key, normalized);
+                }
+            });
+        }
+        return filterToolParams(toolName, params);
+    }
+
+    private Object normalizeToolParam(String toolName, String key, Object value) {
+        if (key == null || value == null || isContextBoundParam(key)) {
+            return null;
+        }
+        if ("topK".equals(key) || "limit".equals(key)) {
+            return clampPositiveNumber(value, MAX_TOOL_RESULT_WINDOW);
+        }
+        if ("filters".equals(key)) {
+            return normalizeStringList(value, 8);
+        }
+        if (value instanceof String text) {
+            if ("content".equals(key)) {
+                String normalizedContent = text.replace("\r\n", "\n").replace('\r', '\n');
+                return normalizedContent.isBlank() ? null : normalizedContent;
+            }
+            String normalized = text.replace('\r', ' ').replace('\n', ' ').trim();
+            if (normalized.isBlank()) {
+                return null;
+            }
+            if ("query".equals(key) || "keyword".equals(key)) {
+                int maxLength = isLowYieldRetrievalTool(toolName) ? MAX_RETRIEVAL_QUERY_LENGTH : MAX_TOOL_QUERY_LENGTH;
+                return shorten(normalized, maxLength);
+            }
+            return normalized;
+        }
+        return value;
+    }
+
+    private Integer clampPositiveNumber(Object value, int maxValue) {
+        try {
+            int parsed = value instanceof Number number
+                    ? number.intValue()
+                    : Integer.parseInt(String.valueOf(value).trim());
+            return Math.max(1, Math.min(parsed, maxValue));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private List<String> normalizeStringList(Object value, int maxItems) {
+        List<?> rawValues;
+        if (value instanceof List<?> list) {
+            rawValues = list;
+        } else {
+            rawValues = List.of(value);
+        }
+        List<String> normalized = new ArrayList<>();
+        for (Object rawValue : rawValues) {
+            if (rawValue == null) {
+                continue;
+            }
+            String item = String.valueOf(rawValue).trim();
+            if (!item.isBlank()) {
+                normalized.add(item);
+            }
+            if (normalized.size() >= maxItems) {
+                break;
+            }
+        }
+        return normalized;
+    }
+
+    private boolean shouldStopAfterRepeatedRetrieval(String toolName, ReactState state) {
+        return isLowYieldRetrievalTool(toolName) && hasAnyLowYieldRetrievalCall(state);
+    }
+
+    private boolean hasAnyLowYieldRetrievalCall(ReactState state) {
+        if (state == null || state.toolResults() == null) {
+            return false;
+        }
+        return state.toolResults().stream()
+                .filter(Objects::nonNull)
+                .map(ToolCallResult::toolName)
+                .anyMatch(this::isLowYieldRetrievalTool);
+    }
+
+    private boolean isLowYieldRetrievalTool(String toolName) {
+        return LOW_YIELD_RETRIEVAL_TOOLS.contains(toolName);
+    }
+
+    private boolean isContextBoundParam(String key) {
+        return CONTEXT_BOUND_PARAM_KEYS.contains(key);
+    }
+
+    private String extractCandidatePath(String userMessage) {
+        String text = safe(userMessage);
+        Matcher windowsMatcher = WINDOWS_PATH_PATTERN.matcher(text);
+        if (windowsMatcher.find()) {
+            return windowsMatcher.group(1);
+        }
+        Matcher unixMatcher = UNIX_PATH_PATTERN.matcher(text);
+        if (unixMatcher.find()) {
+            return unixMatcher.group(1);
+        }
+        return "";
+    }
+
+    private String extractSearchPattern(String userMessage, String extractedPath) {
+        String normalized = safe(userMessage);
+        if (!safe(extractedPath).isBlank()) {
+            normalized = normalized.replace(extractedPath, " ");
+        }
+        normalized = normalized
+                .replaceAll("(?i)please", " ")
+                .replaceAll("(?i)local", " ")
+                .replaceAll("(?i)folder", " ")
+                .replaceAll("(?i)directory", " ")
+                .replaceAll("(?i)file", " ")
+                .replaceAll("(?i)path", " ")
+                .replaceAll("(?i)search", " ")
+                .replaceAll("(?i)find", " ")
+                .replaceAll("(?i)grep", " ")
+                .replaceAll("(?i)list", " ")
+                .replaceAll("(?i)read", " ")
+                .replaceAll("(?i)open", " ")
+                .replaceAll("(?i)view", " ")
+                .replace("本地", " ")
+                .replace("目录", " ")
+                .replace("文件夹", " ")
+                .replace("文件", " ")
+                .replace("路径", " ")
+                .replace("搜索", " ")
+                .replace("查找", " ")
+                .replace("读取", " ")
+                .replace("打开", " ")
+                .replace("查看", " ")
+                .replace("列出", " ")
+                .replace("扫描", " ")
+                .replace("，", " ")
+                .replace("。", " ")
+                .replace("；", " ")
+                .replace("：", " ")
+                .replace("（", " ")
+                .replace("）", " ")
+                .replaceAll("[,.;:()\\[\\]{}]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.length() > 80) {
+            return "";
+        }
+        return normalized;
+    }
+
+    private boolean looksLikeFilePath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        int slashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        int dotIndex = path.lastIndexOf('.');
+        return dotIndex > slashIndex;
     }
 
     private Map<String, Object> keepOnly(Map<String, Object> source, String... keys) {

@@ -124,7 +124,7 @@ public class ConversationalService {
                 emitter.complete();
             } catch (Exception e) {
                 sendEvent(emitter, "error", Map.of("message", e.getMessage() == null ? "深度分析失败" : e.getMessage()));
-                emitter.completeWithError(e);
+                emitter.complete();
             }
         });
 

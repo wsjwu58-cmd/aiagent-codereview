@@ -18,7 +18,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class ChatHistoryRepository {
@@ -29,9 +31,11 @@ public class ChatHistoryRepository {
             .withZone(ZoneId.systemDefault());
     private static final int MAX_CHUNK_LENGTH = 380;
     private static final int CHUNK_OVERLAP = 60;
+    private static final int MAX_VECTOR_QUERY_LENGTH = 320;
 
     private final MilvusVectorStore vectorStore;
     private final ConcurrentLinkedDeque<ChatHistoryRecord> localCache = new ConcurrentLinkedDeque<>();
+    private final Map<String, List<String>> messageDocumentIds = new ConcurrentHashMap<>();
 
     public ChatHistoryRepository(MilvusVectorStore vectorStore) {
         this.vectorStore = vectorStore;
@@ -54,21 +58,23 @@ public class ChatHistoryRepository {
         try {
             List<Document> docs = buildDocuments(record, message);
             if (!docs.isEmpty()) {
+                messageDocumentIds.put(record.id(), docs.stream().map(Document::getId).toList());
                 vectorStore.add(docs);
             }
         } catch (Exception e) {
-            log.warn("淇濆瓨瀵硅瘽鍘嗗彶鍒板悜閲忓簱澶辫触锛屽凡闄嶇骇涓哄唴瀛樼紦瀛樸€俿essionId={}, reason={}", sessionId, e.getMessage());
+            log.warn("保存对话历史到向量库失败，已降级为内存缓存。sessionId={}, reason={}", sessionId, e.getMessage());
         }
     }
 
     public List<ChatHistoryRecord> searchRelevant(String query, String currentSessionId, int limit) {
         int realLimit = Math.max(1, limit);
         LinkedHashMap<String, ChatHistoryRecord> merged = new LinkedHashMap<>();
+        String vectorQuery = sanitizeVectorQuery(query);
 
-        if (query != null && !query.isBlank()) {
+        if (!vectorQuery.isBlank()) {
             try {
                 List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
-                        .query(query)
+                        .query(vectorQuery)
                         .topK(Math.max(realLimit * 3, realLimit))
                         .build());
                 for (Document doc : docs) {
@@ -82,7 +88,7 @@ public class ChatHistoryRepository {
                     }
                 }
             } catch (Exception e) {
-                log.warn("妫€绱㈠璇濆巻鍙插悜閲忓け璐ワ紝寮€濮嬩娇鐢ㄦ湰鍦扮紦瀛樺厹搴曘€俽eason={}", e.getMessage());
+                log.warn("检索对话历史向量失败，尝试使用本地缓存。reason={}", e.getMessage());
             }
         }
 
@@ -99,6 +105,30 @@ public class ChatHistoryRepository {
         return merged.values().stream()
                 .limit(realLimit)
                 .toList();
+    }
+
+    public List<ChatHistoryRecord> listRecent(String sessionId, int limit) {
+        return localCache.stream()
+                .filter(item -> sessionId == null || sessionId.isBlank() || Objects.equals(sessionId, item.sessionId()))
+                .sorted(Comparator.comparingLong(ChatHistoryRecord::timestamp).reversed())
+                .limit(Math.max(1, limit))
+                .toList();
+    }
+
+    public void deleteByMessageId(String messageId) {
+        if (messageId == null || messageId.isBlank()) {
+            return;
+        }
+        localCache.removeIf(item -> Objects.equals(messageId, item.id()));
+        List<String> documentIds = messageDocumentIds.remove(messageId);
+        if (documentIds == null || documentIds.isEmpty()) {
+            return;
+        }
+        try {
+            vectorStore.delete(documentIds);
+        } catch (Exception e) {
+            log.warn("Delete chat history vectors failed. messageId={}, reason={}", messageId, e.getMessage());
+        }
     }
 
     private ChatHistoryRecord toRecord(Document document) {
@@ -175,5 +205,18 @@ public class ChatHistoryRepository {
     private String safeText(String text) {
         return text == null ? "" : text;
     }
-}
 
+    private String sanitizeVectorQuery(String text) {
+        String normalized = safeText(text)
+                .replace('\r', ' ')
+                .replace('\n', ' ')
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.length() <= MAX_VECTOR_QUERY_LENGTH) {
+            return normalized;
+        }
+        int tailLength = Math.min(100, normalized.length() / 3);
+        int headLength = Math.max(0, MAX_VECTOR_QUERY_LENGTH - tailLength - 5);
+        return normalized.substring(0, headLength) + " ... " + normalized.substring(normalized.length() - tailLength);
+    }
+}

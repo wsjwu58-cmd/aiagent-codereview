@@ -1,6 +1,8 @@
 package com.heima.codereview.core.agent.specialized;
 
 import com.heima.codereview.core.agent.AgentTextGenerator;
+import com.heima.codereview.core.agent.SpecialistAgent;
+import com.heima.codereview.core.agent.planning.IntentType;
 import com.heima.codereview.core.agent.react.ReactContext;
 import com.heima.codereview.core.agent.react.ReactState;
 import com.heima.codereview.core.agent.react.ToolCallResult;
@@ -12,7 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
-public class PerformanceSpecialistAgent extends SpecializedAgent {
+public class PerformanceSpecialistAgent extends SpecialistAgent {
 
     public PerformanceSpecialistAgent(AgentTextGenerator textGenerator,
                                       ObjectProvider<McpToolExecutor> toolExecutorProvider,
@@ -31,13 +33,32 @@ public class PerformanceSpecialistAgent extends SpecializedAgent {
     }
 
     @Override
+    public String specialty() {
+        return "performance";
+    }
+
+    @Override
+    public List<IntentType> supportedIntents() {
+        return List.of(IntentType.PERFORMANCE_ANALYSIS);
+    }
+
+    @Override
     protected String getSpecialistSystemPrompt() {
         return "You are a performance specialist. Focus on algorithmic complexity, hot loops, repeated queries, blocking calls, and memory pressure. Always answer in Simplified Chinese.";
     }
 
     @Override
     protected List<String> preferredToolNames() {
-        return List.of("git_diff_fetch", "sonar_scan", "review_history_search", "session_memory_read", "chat_history_search", "norm_search");
+        return List.of(
+                "git_diff_fetch",
+                "review_history_search",
+                "session_memory_read",
+                "chat_history_search",
+                "norm_search",
+                "local_file_list",
+                "local_file_read",
+                "local_file_search"
+        );
     }
 
     @Override

@@ -19,11 +19,15 @@ spring:
       base-url: ${OPENAI_BASE_URL:https://api.siliconflow.cn}
       api-key: ${OPENAI_API_KEY:sk-wotxcpcnxztkgrdqrzytqtmqxonxerxjuwgboptnplhrvbsi}
       chat:
+        base-url: ${OPENAI_CHAT_BASE_URL:https://api.siliconflow.cn}
+        api-key: ${OPENAI_CHAT_API_KEY:${OPENAI_API_KEY:sk-wotxcpcnxztkgrdqrzytqtmqxonxerxjuwgboptnplhrvbsi}}
+        completions-path: ${OPENAI_CHAT_COMPLETIONS_PATH:/v1/chat/completions}
         options:
-          model: Qwen/Qwen3-Coder-30B-A3B-Instruct
+          model: ${OPENAI_CHAT_MODEL:Qwen/Qwen3-Coder-30B-A3B-Instruct}
       embedding:
-        base-url: ${OPENAI_BASE_URL:https://api.siliconflow.cn}
-        api-key: ${OPENAI_API_KEY:sk-wotxcpcnxztkgrdqrzytqtmqxonxerxjuwgboptnplhrvbsi}
+        base-url: ${OPENAI_EMBEDDING_BASE_URL:https://api.siliconflow.cn}
+        api-key: ${OPENAI_EMBEDDING_API_KEY:${OPENAI_API_KEY:sk-wotxcpcnxztkgrdqrzytqtmqxonxerxjuwgboptnplhrvbsi}}
+        embeddings-path: ${OPENAI_EMBEDDING_PATH:/v1/embeddings}
         options:
           model: ${OPENAI_EMBEDDING_MODEL:BAAI/bge-large-zh-v1.5}
     vectorstore:
@@ -62,8 +66,27 @@ code-review:
     heartbeat-interval-ms: 30000
   memory:
     window-size: 20
-
-sonar:
-  url: ${SONAR_URL:http://localhost:9000}
-  token: ${SONAR_TOKEN:sqa_748f9dc5d251260f2426f0481c5f65b7ed91d63a}
-  project-key: ${SONAR_PROJECT_KEY:wsjproject}
+  pdf:
+    author: ${CODE_REVIEW_PDF_AUTHOR:智能代码审查系统}
+  local-code:
+    allowed-paths:
+      - ${CODE_REVIEW_LOCAL_PATH_1:D:/test}
+      - ${CODE_REVIEW_LOCAL_PATH_2:D:/projects}
+      - ${CODE_REVIEW_LOCAL_PATH_3:C:/workspace}
+      - ${CODE_REVIEW_LOCAL_PATH_4:E:/AIAgent}
+    auto-write: ${CODE_REVIEW_LOCAL_AUTO_WRITE:false}
+  web-search:
+    # Supported providers: serper, tavily, searxng
+    # Example base-url values:
+    # - serper: https://google.serper.dev/search
+    # - tavily: https://api.tavily.com/search
+    # - searxng: https://your-searxng-host/search
+    enabled: ${WEB_SEARCH_ENABLED:true}
+    provider: ${WEB_SEARCH_PROVIDER:tavily}
+    api-key: ${WEB_SEARCH_API_KEY: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}
+    base-url: ${WEB_SEARCH_BASE_URL:https://api.tavily.com/search}
+    region: ${WEB_SEARCH_REGION:us}
+    language: ${WEB_SEARCH_LANGUAGE:zh-cn}
+    search-depth: ${WEB_SEARCH_SEARCH_DEPTH:basic}
+    include-answer: ${WEB_SEARCH_INCLUDE_ANSWER:true}
+    snippet-max-length: ${WEB_SEARCH_SNIPPET_MAX_LENGTH:280}

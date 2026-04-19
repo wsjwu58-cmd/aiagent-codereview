@@ -27,11 +27,14 @@ public class PdfRepository {
 
     private static final Logger log = LoggerFactory.getLogger(PdfRepository.class);
     private static final String SOURCE_TYPE = "norm";
+    private static final int MAX_VECTOR_QUERY_LENGTH = 320;
+    private static final int MAX_CHUNK_LENGTH = 800;
 
     private final MilvusVectorStore vectorStore;
     private final PdfExtractor pdfExtractor;
     private final Map<String, NormSummary> catalog = new ConcurrentHashMap<>();
     private final Map<String, List<NormRecord>> pageStore = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> fileDocumentIds = new ConcurrentHashMap<>();
 
     public PdfRepository(MilvusVectorStore vectorStore, PdfExtractor pdfExtractor) {
         this.vectorStore = vectorStore;
@@ -39,20 +42,22 @@ public class PdfRepository {
     }
 
     public NormUploadResult uploadPdf(InputStream pdfStream, String fileName, Map<String, Object> metadata) {
-        String normFileId = IdUtils.compactWithPrefix("normfile", 32);
+        String normFileId = IdUtils.compactUuid();
         long uploadedAt = System.currentTimeMillis();
         String projectId = metadata == null || metadata.get("projectId") == null ? "" : String.valueOf(metadata.get("projectId"));
         String description = metadata == null || metadata.get("description") == null ? "" : String.valueOf(metadata.get("description"));
 
         List<PdfPageContent> pages = pdfExtractor.extract(pdfStream);
         if (pages.isEmpty()) {
-            throw new IllegalArgumentException("鏈兘浠?PDF 涓彁鍙栧埌鍙敤鏂囨湰鍐呭");
+            throw new IllegalArgumentException("PDF文件中未能提取到可用文本内容");
         }
 
-        List<Document> documents = new ArrayList<>(pages.size());
+        List<Document> documents = new ArrayList<>(pages.size() * 3);
         List<NormRecord> records = new ArrayList<>(pages.size());
+        List<String> documentIds = new ArrayList<>();
+        int pageIndex = 0;
         for (PdfPageContent page : pages) {
-            String recordId = IdUtils.compactWithPrefix("norm", 32);
+            String recordId = IdUtils.compactUuid();
             Map<String, Object> docMetadata = new LinkedHashMap<>();
             docMetadata.put("sourceType", SOURCE_TYPE);
             docMetadata.put("normFileId", normFileId);
@@ -77,10 +82,23 @@ public class PdfRepository {
                     safeText(page.summary()),
                     Map.copyOf(docMetadata)
             ));
-            documents.add(new Document(recordId, safeText(page.text()), docMetadata));
+
+            List<String> chunks = splitIntoChunks(safeText(page.text()), MAX_CHUNK_LENGTH);
+            for (int i = 0; i < chunks.size(); i++) {
+                String chunkId = IdUtils.compactUuid();
+                documentIds.add(chunkId);
+                Map<String, Object> chunkMeta = new LinkedHashMap<>(docMetadata);
+                chunkMeta.put("chunkIndex", i);
+                chunkMeta.put("totalChunks", chunks.size());
+                chunkMeta.put("pageIndex", pageIndex);
+                chunkMeta.put("normFileId", normFileId);
+                documents.add(new Document(chunkId, chunks.get(i), chunkMeta));
+            }
+            pageIndex++;
         }
 
         pageStore.put(normFileId, List.copyOf(records));
+        fileDocumentIds.put(normFileId, List.copyOf(documentIds));
         catalog.put(normFileId, new NormSummary(
                 normFileId,
                 fileName,
@@ -93,7 +111,7 @@ public class PdfRepository {
         try {
             vectorStore.add(documents);
         } catch (Exception e) {
-            log.warn("PDF 瑙勮寖鍐欏叆鍚戦噺搴撳け璐ワ紝宸蹭粎淇濈暀鍐呭瓨绱㈠紩銆俧ileName={}, reason={}", fileName, e.getMessage());
+            log.warn("PDF规范写入向量库失败，已仅保存内存索引。fileName={}, reason={}", fileName, e.getMessage());
         }
 
         return new NormUploadResult(normFileId, fileName, projectId, pages.size(), description, uploadedAt);
@@ -102,11 +120,12 @@ public class PdfRepository {
     public List<NormRecord> searchNorms(String query, String projectId, int limit) {
         int realLimit = Math.max(1, limit);
         LinkedHashMap<String, NormRecord> results = new LinkedHashMap<>();
+        String vectorQuery = sanitizeVectorQuery(query);
 
-        if (query != null && !query.isBlank()) {
+        if (!vectorQuery.isBlank()) {
             try {
                 List<Document> docs = vectorStore.similaritySearch(SearchRequest.builder()
-                        .query(query)
+                        .query(vectorQuery)
                         .topK(Math.max(realLimit * 4, realLimit))
                         .build());
                 for (Document doc : docs) {
@@ -123,7 +142,7 @@ public class PdfRepository {
                     }
                 }
             } catch (Exception e) {
-                log.warn("妫€绱?PDF 瑙勮寖鍚戦噺澶辫触锛屽紑濮嬩娇鐢ㄥ唴瀛樼储寮曞厹搴曘€俽eason={}", e.getMessage());
+                log.warn("检索PDF规范向量失败，尝试使用内存存储兜底。reason={}", e.getMessage());
             }
         }
 
@@ -151,6 +170,23 @@ public class PdfRepository {
                 .filter(item -> projectId == null || projectId.isBlank() || Objects.equals(projectId, item.projectId()))
                 .sorted(Comparator.comparingLong(NormSummary::uploadedAt).reversed())
                 .toList();
+    }
+
+    public void deleteNorm(String fileId) {
+        if (fileId == null || fileId.isBlank()) {
+            return;
+        }
+        catalog.remove(fileId);
+        pageStore.remove(fileId);
+        List<String> documentIds = fileDocumentIds.remove(fileId);
+        if (documentIds == null || documentIds.isEmpty()) {
+            return;
+        }
+        try {
+            vectorStore.delete(documentIds);
+        } catch (Exception e) {
+            log.warn("Delete PDF norm vectors failed. fileId={}, reason={}", fileId, e.getMessage());
+        }
     }
 
     private NormRecord toNormRecord(Document document) {
@@ -187,6 +223,48 @@ public class PdfRepository {
 
     private String safeText(String text) {
         return text == null ? "" : text;
+    }
+
+    private String sanitizeVectorQuery(String text) {
+        String normalized = safeText(text)
+                .replace('\r', ' ')
+                .replace('\n', ' ')
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.length() <= MAX_VECTOR_QUERY_LENGTH) {
+            return normalized;
+        }
+        int tailLength = Math.min(100, normalized.length() / 3);
+        int headLength = Math.max(0, MAX_VECTOR_QUERY_LENGTH - tailLength - 5);
+        return normalized.substring(0, headLength) + " ... " + normalized.substring(normalized.length() - tailLength);
+    }
+
+    private List<String> splitIntoChunks(String text, int maxLength) {
+        if (text == null || text.isEmpty()) {
+            return List.of();
+        }
+        if (text.length() <= maxLength) {
+            return List.of(text);
+        }
+        List<String> chunks = new ArrayList<>();
+        int start = 0;
+        while (start < text.length()) {
+            int end = Math.min(start + maxLength, text.length());
+            if (end < text.length()) {
+                int breakPoint = text.lastIndexOf('\n', end);
+                if (breakPoint > start + maxLength / 2) {
+                    end = breakPoint + 1;
+                } else {
+                    breakPoint = text.lastIndexOf('。', end);
+                    if (breakPoint > start + maxLength / 2) {
+                        end = breakPoint + 1;
+                    }
+                }
+            }
+            chunks.add(text.substring(start, end));
+            start = end;
+        }
+        return chunks;
     }
 }
 

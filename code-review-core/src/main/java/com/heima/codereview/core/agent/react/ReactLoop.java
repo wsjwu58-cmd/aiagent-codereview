@@ -13,7 +13,7 @@ import java.util.List;
 @Service
 public class ReactLoop {
 
-    private static final int MAX_ITERATIONS = 8;
+    private static final int MAX_ITERATIONS = 5;
 
     public SpecialistExecutionResult execute(SpecializedAgent agent,
                                              String userMessage,
@@ -53,6 +53,30 @@ public class ReactLoop {
                 break;
             }
 
+            if (shouldSkipToolDueToExistingData(decision, toolResults)) {
+                ThinkingStep skipThought = ThinkingStep.thinking(
+                        agent.getId(),
+                        agent.getName(),
+                        "Skipping " + decision.toolName() + " - relevant data already retrieved. Using existing results to analyze."
+                );
+                steps.add(skipThought);
+                listener.onStep(skipThought);
+
+                String analysis = agent.generateAnalysis(userMessage, reactContext, toolResults);
+                finalContent = analysis != null ? analysis : "";
+                state = new ReactState(
+                        steps,
+                        toolResults,
+                        currentRound,
+                        state.consecutiveNoProgress(),
+                        finalContent,
+                        true,
+                        "existing_data_sufficient"
+                );
+                completed = true;
+                break;
+            }
+
             ToolCallResult toolResult = agent.callTool(decision.toolName(), decision.toolParams(), userMessage, reactContext, state);
             toolResults.add(toolResult);
 
@@ -73,6 +97,7 @@ public class ReactLoop {
 
             int consecutiveNoProgress = isLowValueObservation(toolResult)
                     || state.hasToolCall(toolResult.toolName(), toolResult.input())
+                    || state.toolCallCount(toolResult.toolName()) >= 2
                     ? state.consecutiveNoProgress() + 1
                     : 0;
 
@@ -143,6 +168,35 @@ public class ReactLoop {
                 || output.contains("not found")
                 || output.contains("failed")
                 || output.contains("unavailable");
+    }
+
+    private boolean shouldSkipToolDueToExistingData(ReactDecision decision, List<ToolCallResult> toolResults) {
+        if (decision == null || decision.toolName() == null || toolResults == null || toolResults.isEmpty()) {
+            return false;
+        }
+        String toolName = decision.toolName();
+
+        if ("git_diff_fetch".equals(toolName)) {
+            for (ToolCallResult result : toolResults) {
+                if ("git_diff_fetch".equals(result.toolName())
+                        && result.output() != null
+                        && result.output().length() > 100) {
+                    return true;
+                }
+            }
+        }
+
+        if ("file_operation".equals(toolName) || "code_search".equals(toolName)) {
+            for (ToolCallResult result : toolResults) {
+                if (("git_diff_fetch".equals(result.toolName()))
+                        && result.output() != null
+                        && result.output().length() > 100) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private String safe(String value, String fallback) {

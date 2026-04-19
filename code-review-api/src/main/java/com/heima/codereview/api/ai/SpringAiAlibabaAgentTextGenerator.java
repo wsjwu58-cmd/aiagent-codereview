@@ -153,16 +153,74 @@ public class SpringAiAlibabaAgentTextGenerator implements AgentTextGenerator {
                 .description("Generate refactoring output from code and suggestions.")
                 .inputType(CodeRefactorToolRequest.class)
                 .build());
-        if (hasNonBlankContext(context, "projectId")) {
-            callbacks.add(FunctionToolCallback.builder("sonar_scan", (SonarScanToolRequest request, ToolContext toolContext) ->
-                            mcpToolExecutor.execute("sonar_scan", Map.of(
-                                    "projectKey", firstNonBlank(request.projectKey(), stringFromContext(toolContext, "projectId")),
-                                    "branch", firstNonBlank(request.branch(), stringFromContext(toolContext, "branch"))
-                            )))
-                    .description("Run a Sonar-style scan for the current project and branch.")
-                    .inputType(SonarScanToolRequest.class)
-                    .build());
-        }
+        callbacks.add(FunctionToolCallback.builder("file_operation", (FileOperationToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("file_operation", Map.of(
+                                "repoUrl", firstNonBlank(request.repoUrl(), stringFromContext(toolContext, "repoUrl")),
+                                "path", defaultString(request.path()),
+                                "action", firstNonBlank(request.action(), "list"),
+                                "keyword", defaultString(request.keyword()),
+                                "limit", request.limit() == null ? 20 : request.limit()
+                        )))
+                .description("List or read local repository files.")
+                .inputType(FileOperationToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("local_file_list", (LocalFileListToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("local_file_list", Map.of(
+                                "path", defaultString(request.path()),
+                                "filters", defaultStringList(request.filters())
+                        )))
+                .description("List files under an allowed local directory using optional glob filters.")
+                .inputType(LocalFileListToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("local_file_read", (LocalFileReadToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("local_file_read", Map.of(
+                                "path", defaultString(request.path())
+                        )))
+                .description("Read a file from an allowed local directory.")
+                .inputType(LocalFileReadToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("local_file_write", (LocalFileWriteToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("local_file_write", Map.of(
+                                "path", defaultString(request.path()),
+                                "content", defaultString(request.content())
+                        )))
+                .description("Write or overwrite a file in an allowed local directory.")
+                .inputType(LocalFileWriteToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("local_file_search", (LocalFileSearchToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("local_file_search", Map.of(
+                                "path", defaultString(request.path()),
+                                "pattern", defaultString(request.pattern()),
+                                "filters", defaultStringList(request.filters())
+                        )))
+                .description("Search files in an allowed local directory by content pattern and optional glob filters.")
+                .inputType(LocalFileSearchToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("local_file_delete", (LocalFileDeleteToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("local_file_delete", Map.of(
+                                "path", defaultString(request.path())
+                        )))
+                .description("Delete a file in an allowed local directory.")
+                .inputType(LocalFileDeleteToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("code_search", (CodeSearchToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("code_search", Map.of(
+                                "repoUrl", firstNonBlank(request.repoUrl(), stringFromContext(toolContext, "repoUrl")),
+                                "query", defaultString(request.query()),
+                                "language", firstNonBlank(request.language(), stringFromContext(toolContext, "language")),
+                                "limit", request.limit() == null ? 10 : request.limit()
+                        )))
+                .description("Search source code under the current repository.")
+                .inputType(CodeSearchToolRequest.class)
+                .build());
+        callbacks.add(FunctionToolCallback.builder("web_search", (WebSearchToolRequest request, ToolContext toolContext) ->
+                        mcpToolExecutor.execute("web_search", Map.of(
+                                "query", defaultString(request.query()),
+                                "limit", request.limit() == null ? 5 : request.limit()
+                        )))
+                .description("Search external web resources when a provider is configured.")
+                .inputType(WebSearchToolRequest.class)
+                .build());
         if (hasNonBlankContext(context, "repoUrl")) {
             callbacks.add(FunctionToolCallback.builder("git_diff_fetch", (GitDiffToolRequest request, ToolContext toolContext) ->
                             mcpToolExecutor.execute("git_diff_fetch", Map.of(
@@ -196,6 +254,10 @@ public class SpringAiAlibabaAgentTextGenerator implements AgentTextGenerator {
         return text == null ? "" : text;
     }
 
+    private static List<String> defaultStringList(List<String> values) {
+        return values == null ? List.of() : values;
+    }
+
     private static boolean hasNonBlankContext(Map<String, Object> context, String key) {
         Object value = context.get(key);
         return value != null && !String.valueOf(value).isBlank();
@@ -224,6 +286,27 @@ public class SpringAiAlibabaAgentTextGenerator implements AgentTextGenerator {
     private record NormSearchToolRequest(String query, String projectId, Integer limit) {
     }
 
-    private record SonarScanToolRequest(String projectKey, String branch) {
+    private record FileOperationToolRequest(String repoUrl, String path, String action, String keyword, Integer limit) {
+    }
+
+    private record LocalFileListToolRequest(String path, List<String> filters) {
+    }
+
+    private record LocalFileReadToolRequest(String path) {
+    }
+
+    private record LocalFileWriteToolRequest(String path, String content) {
+    }
+
+    private record LocalFileSearchToolRequest(String path, String pattern, List<String> filters) {
+    }
+
+    private record LocalFileDeleteToolRequest(String path) {
+    }
+
+    private record CodeSearchToolRequest(String repoUrl, String query, String language, Integer limit) {
+    }
+
+    private record WebSearchToolRequest(String query, Integer limit) {
     }
 }

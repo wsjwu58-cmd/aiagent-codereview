@@ -58,7 +58,7 @@ public class MilvusRepository {
             String documentId = IdUtils.compactWithPrefix("record", 32);
             Document doc = new Document(documentId, safe(record.content()), docMetadata);
             vectorStore.add(List.of(doc));
-            cacheRecord(toReviewRecord(doc, record.projectId(), record.sessionId()), docMetadata);
+            cacheRecord(toReviewRecord(doc, record.projectId(), record.sessionId()), docMetadata, documentId);
             log.debug("Inserted review document. collection={}, id={}", this.collectionName, record.id());
         } catch (Exception e) {
             log.error("Failed to insert review document. collection={}, id={}", this.collectionName, record.id(), e);
@@ -87,7 +87,7 @@ public class MilvusRepository {
                     continue;
                 }
                 results.add(record);
-                cacheRecord(record, doc.getMetadata());
+                cacheRecord(record, doc.getMetadata(), doc.getId());
             }
             return results;
         } catch (Exception e) {
@@ -115,6 +115,20 @@ public class MilvusRepository {
                 .findFirst();
     }
 
+    public void deleteByReviewId(String reviewId) {
+        if (reviewId == null || reviewId.isBlank()) {
+            return;
+        }
+        List<String> documentIds = localCache.values().stream()
+                .filter(entry -> Objects.equals(reviewId, entry.record().reviewId()))
+                .map(CachedReviewEntry::documentId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        deleteDocuments(documentIds);
+        localCache.entrySet().removeIf(entry -> Objects.equals(reviewId, entry.getValue().record().reviewId()));
+    }
+
     private ReviewRecord toReviewRecord(Document doc, String fallbackProjectId, String fallbackSessionId) {
         Map<String, Object> metadata = doc.getMetadata();
         String recordId = metadata.get("recordId") instanceof String recordIdValue && !recordIdValue.isBlank()
@@ -139,11 +153,11 @@ public class MilvusRepository {
         );
     }
 
-    private void cacheRecord(ReviewRecord record, Map<String, Object> metadata) {
+    private void cacheRecord(ReviewRecord record, Map<String, Object> metadata, String documentId) {
         if (record == null || record.id() == null || record.id().isBlank()) {
             return;
         }
-        localCache.put(record.id(), new CachedReviewEntry(record, Map.copyOf(metadata == null ? Map.of() : metadata)));
+        localCache.put(record.id(), new CachedReviewEntry(record, Map.copyOf(metadata == null ? Map.of() : metadata), documentId));
     }
 
     private boolean matchesProject(String recordProjectId, String projectId) {
@@ -158,6 +172,17 @@ public class MilvusRepository {
         return text == null ? "" : text;
     }
 
-    private record CachedReviewEntry(ReviewRecord record, Map<String, Object> metadata) {
+    private void deleteDocuments(List<String> documentIds) {
+        if (documentIds == null || documentIds.isEmpty()) {
+            return;
+        }
+        try {
+            vectorStore.delete(documentIds);
+        } catch (Exception e) {
+            log.warn("Failed to delete review documents from vector store. ids={}, reason={}", documentIds, e.getMessage());
+        }
+    }
+
+    private record CachedReviewEntry(ReviewRecord record, Map<String, Object> metadata, String documentId) {
     }
 }
