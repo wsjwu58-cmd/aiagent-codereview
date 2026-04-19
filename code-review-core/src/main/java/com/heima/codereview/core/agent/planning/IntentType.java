@@ -1,0 +1,12 @@
+package com.heima.codereview.core.agent.planning;
+
+public enum IntentType {
+    SIMPLE_ANSWER,
+    CODE_REVIEW,
+    SECURITY_ANALYSIS,
+    PERFORMANCE_ANALYSIS,
+    ARCHITECTURE_ANALYSIS,
+    DOCUMENTATION_GENERATION,
+    GENERAL_CODING,
+    KNOWLEDGE_RETRIEVAL
+}
