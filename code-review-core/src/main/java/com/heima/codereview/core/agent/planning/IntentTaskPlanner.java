@@ -21,6 +21,11 @@ public class IntentTaskPlanner {
     private final LlmIntentClassifier intentClassifier;
     private final LlmTaskPlanner taskPlanner;
 
+    /** 无参构造函数，用于兼容测试和降级场景 */
+    public IntentTaskPlanner() {
+        this(null, null);
+    }
+
     public IntentTaskPlanner(LlmIntentClassifier intentClassifier, LlmTaskPlanner taskPlanner) {
         this.intentClassifier = intentClassifier;
         this.taskPlanner = taskPlanner;
@@ -45,6 +50,11 @@ public class IntentTaskPlanner {
 
     /** 使用LLM进行意图分析 */
     private IntentAnalysisResult analyzeWithLLM(String userMessage, ConversationContext context, boolean forceReview) {
+        // LLM组件不可用时降级到关键词
+        if (intentClassifier == null) {
+            return analyzeWithKeywords(userMessage, context, forceReview);
+        }
+
         IntentClassification classification = intentClassifier.analyze(userMessage, context);
 
         IntentType primary = classification.primary();
@@ -197,6 +207,11 @@ public class IntentTaskPlanner {
             return PlannedTasks.empty();
         }
         return taskPlanner.plan(userMessage, context, intent, maxTasks);
+    }
+
+    /** 检查LLM组件是否可用 */
+    private boolean isLlmAvailable() {
+        return intentClassifier != null && taskPlanner != null;
     }
 
     public boolean isParallelizable(IntentType intentType) {

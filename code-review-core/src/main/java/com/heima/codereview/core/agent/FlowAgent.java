@@ -110,7 +110,7 @@ public class FlowAgent extends BaseAgent {
                     userMessage, conversationContext, intent, MAX_PLANNED_TASKS);
 
             if (!planned.tasks().isEmpty()) {
-                executePlannedTasks(planned, userMessage, conversationContext, intent, listener,
+                executePlannedTasks(planned, userMessage, conversationContext, intent, createBridgeListener(sessionId, listener),
                         parallelReports, parallelResults, allTaskResults, allSteps);
             }
         } else {
@@ -284,29 +284,33 @@ public class FlowAgent extends BaseAgent {
 
         switch (planned.strategy()) {
             case PARALLEL:
-                // 无依赖的任务并行执行
-                List<SubTask> parallelTasks = subTasks.stream()
-                        .filter(t -> t.dependencies() == null || t.dependencies().isEmpty())
-                        .toList();
-                if (!parallelTasks.isEmpty()) {
-                    parallelReports = runParallelSpecialists(parallelTasks, userMessage, context, intent, listener, parallelResults, allTaskResults, allSteps);
+                // PARALLEL策略：全部并行执行（依赖关系由LLM规划器保证）
+                if (!subTasks.isEmpty()) {
+                    parallelReports = runParallelSpecialists(subTasks, userMessage, context, intent, listener, parallelResults, allTaskResults, allSteps);
                 }
-                // 串行执行有依赖的任务
-                List<SubTask> sequentialTasks = subTasks.stream()
-                        .filter(t -> t.dependencies() != null && !t.dependencies().isEmpty())
+                break;
+            case MIXED:
+                // MIXED策略：根据优先级分组，高优先级并行，低优先级串行
+                List<SubTask> highPriority = subTasks.stream()
+                        .filter(t -> t.depth() == 0)
                         .toList();
-                if (!sequentialTasks.isEmpty()) {
+                List<SubTask> lowPriority = subTasks.stream()
+                        .filter(t -> t.depth() > 0)
+                        .toList();
+                if (!highPriority.isEmpty()) {
+                    parallelReports = runParallelSpecialists(highPriority, userMessage, context, intent, listener, parallelResults, allTaskResults, allSteps);
+                }
+                if (!lowPriority.isEmpty()) {
                     PlanningExecution execution = runPlannerSequential(
-                            userMessage, context, intent, sequentialTasks, listener, new ExecutionHistory(), MAX_PLANNED_TASKS);
+                            userMessage, context, intent, lowPriority, listener, new ExecutionHistory(), MAX_PLANNED_TASKS);
                     parallelReports.addAll(execution.reports());
                     allTaskResults.addAll(execution.taskResults());
                     allSteps.addAll(execution.steps());
                 }
                 break;
-            case MIXED:
             case SEQUENTIAL:
             default:
-                // 全部串行执行
+                // SEQUENTIAL策略：全部串行执行
                 PlanningExecution execution = runPlannerSequential(
                         userMessage, context, intent, subTasks, listener, new ExecutionHistory(), MAX_PLANNED_TASKS);
                 parallelReports = execution.reports();
