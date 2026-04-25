@@ -3,6 +3,7 @@ package com.heima.codereview.rag;
 import com.heima.codereview.common.model.chat.ChatHistoryRecord;
 import com.heima.codereview.common.model.chat.ChatMessage;
 import com.heima.codereview.common.utils.IdUtils;
+import com.heima.codereview.rag.embedding.TextChunker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -34,11 +35,13 @@ public class ChatHistoryRepository {
     private static final int MAX_VECTOR_QUERY_LENGTH = 320;
 
     private final MilvusVectorStore vectorStore;
+    private final TextChunker textChunker;
     private final ConcurrentLinkedDeque<ChatHistoryRecord> localCache = new ConcurrentLinkedDeque<>();
     private final Map<String, List<String>> messageDocumentIds = new ConcurrentHashMap<>();
 
-    public ChatHistoryRepository(MilvusVectorStore vectorStore) {
+    public ChatHistoryRepository(MilvusVectorStore vectorStore, TextChunker textChunker) {
         this.vectorStore = vectorStore;
+        this.textChunker = textChunker;
     }
 
     public void saveChatHistory(String sessionId, ChatMessage message) {
@@ -156,7 +159,7 @@ public class ChatHistoryRepository {
                 safeText(message.role()),
                 FORMATTER.format(Instant.ofEpochMilli(message.timestamp()))
         );
-        List<String> chunks = splitChunks(safeText(message.content()));
+        List<String> chunks = textChunker.chunk(safeText(message.content()), MAX_CHUNK_LENGTH, CHUNK_OVERLAP, TextChunker.ChunkProfile.CHAT);
         if (chunks.isEmpty()) {
             return List.of();
         }

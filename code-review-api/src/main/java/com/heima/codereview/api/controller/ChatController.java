@@ -43,6 +43,7 @@ public class ChatController {
 
     @PostMapping(value = "/react", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter react(@RequestBody ReactChatRequest request) {
+
         return conversationalService.react(request);
     }
 

@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.milvus.MilvusVectorStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -22,15 +23,19 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MilvusRepository {
 
     private static final Logger log = LoggerFactory.getLogger(MilvusRepository.class);
+    private static final String REVIEW_SOURCE_TYPE = "review";
 
     private final MilvusVectorStore vectorStore;
+    private final MilvusHybridRepository hybridRepository;
     private final String collectionName;
     private final int defaultTopK = 5;
     private final Map<String, CachedReviewEntry> localCache = new ConcurrentHashMap<>();
 
     public MilvusRepository(MilvusVectorStore vectorStore,
+                            ObjectProvider<MilvusHybridRepository> hybridRepositoryProvider,
                             @Value("${spring.ai.vectorstore.milvus.collection-name:code_review_knowledge}") String collectionName) {
         this.vectorStore = vectorStore;
+        this.hybridRepository = hybridRepositoryProvider.getIfAvailable();
         this.collectionName = collectionName;
         log.info("MilvusRepository initialized. collection={}", collectionName);
     }
@@ -42,6 +47,7 @@ public class MilvusRepository {
     public void insert(String collectionName, ReviewRecord record, Map<String, Object> metadata) {
         try {
             Map<String, Object> docMetadata = new LinkedHashMap<>();
+            docMetadata.put("sourceType", REVIEW_SOURCE_TYPE);
             docMetadata.put("reviewId", safe(record.reviewId()));
             docMetadata.put("sessionId", safe(record.sessionId()));
             docMetadata.put("projectId", safe(record.projectId()));
@@ -59,6 +65,9 @@ public class MilvusRepository {
             Document doc = new Document(documentId, safe(record.content()), docMetadata);
             vectorStore.add(List.of(doc));
             cacheRecord(toReviewRecord(doc, record.projectId(), record.sessionId()), docMetadata, documentId);
+            if (hybridRepository != null) {
+                hybridRepository.insert(record, docMetadata);
+            }
             log.debug("Inserted review document. collection={}, id={}", this.collectionName, record.id());
         } catch (Exception e) {
             log.error("Failed to insert review document. collection={}, id={}", this.collectionName, record.id(), e);
@@ -71,12 +80,22 @@ public class MilvusRepository {
 
     public List<ReviewRecord> search(String query, String projectId, String sessionId, int topK) {
         try {
-            SearchRequest request = SearchRequest.builder()
+            SearchRequest.Builder builder = SearchRequest.builder()
                     .query(query == null ? "" : query)
-                    .topK(topK > 0 ? topK : defaultTopK)
-                    .build();
+                    .topK(topK > 0 ? topK : defaultTopK);
+            String filterExpression = buildFilterExpression(projectId, sessionId);
+            if (!filterExpression.isBlank()) {
+                builder.filterExpression(filterExpression);
+            }
+            SearchRequest request = builder.build();
 
             List<Document> docs = vectorStore.similaritySearch(request);
+            if (docs.isEmpty() && !filterExpression.isBlank()) {
+                docs = vectorStore.similaritySearch(SearchRequest.builder()
+                        .query(query == null ? "" : query)
+                        .topK(topK > 0 ? topK : defaultTopK)
+                        .build());
+            }
             List<ReviewRecord> results = new ArrayList<>();
             for (Document doc : docs) {
                 ReviewRecord record = toReviewRecord(doc, projectId, sessionId);
@@ -94,6 +113,13 @@ public class MilvusRepository {
             log.error("Vector search failed. collection={}, query={}", this.collectionName, query, e);
             return List.of();
         }
+    }
+
+    public List<ReviewRecord> hybridSearch(String query, String projectId, String sessionId, int topK) {
+        if (hybridRepository == null || !hybridRepository.isEnabled()) {
+            return List.of();
+        }
+        return hybridRepository.search(query, projectId, sessionId, topK);
     }
 
     public List<ReviewRecord> cachedRecords(String projectId, String sessionId) {
@@ -126,6 +152,9 @@ public class MilvusRepository {
                 .distinct()
                 .toList();
         deleteDocuments(documentIds);
+        if (hybridRepository != null) {
+            hybridRepository.deleteByReviewId(reviewId);
+        }
         localCache.entrySet().removeIf(entry -> Objects.equals(reviewId, entry.getValue().record().reviewId()));
     }
 
@@ -170,6 +199,22 @@ public class MilvusRepository {
 
     private String safe(String text) {
         return text == null ? "" : text;
+    }
+
+    private String buildFilterExpression(String projectId, String sessionId) {
+        List<String> filters = new ArrayList<>();
+        filters.add("sourceType == '" + REVIEW_SOURCE_TYPE + "'");
+        if (projectId != null && !projectId.isBlank()) {
+            filters.add("projectId == '" + escapeFilter(projectId) + "'");
+        }
+        if (sessionId != null && !sessionId.isBlank()) {
+            filters.add("sessionId == '" + escapeFilter(sessionId) + "'");
+        }
+        return String.join(" && ", filters);
+    }
+
+    private String escapeFilter(String value) {
+        return safe(value).replace("\\", "\\\\").replace("'", "\\'");
     }
 
     private void deleteDocuments(List<String> documentIds) {

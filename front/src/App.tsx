@@ -7,7 +7,7 @@ import { ChatPage } from './pages/Chat/Workspace'
 import { KnowledgeManagePage } from './pages/KnowledgeManage'
 import { PdfUploadPage } from './pages/PdfUpload'
 import { listSessions, type SessionSummary } from './services/api'
-import { LayoutDashboard, FileCode, MessageSquare, FileUp, ChevronRight, LogOut, Zap, Database } from 'lucide-react'
+import { LayoutDashboard, GitPullRequest, MessageSquare, FileUp, ChevronRight, LogOut, Zap, Database } from 'lucide-react'
 
 const SESSION_STORAGE_KEY = 'code-review.selectedSessionId'
 const REVIEW_STORAGE_KEY = 'code-review.selectedReviewId'
@@ -104,7 +104,7 @@ export function App() {
 
   const navItems = [
     { key: 'dashboard' as TabKey, label: '工作台', icon: LayoutDashboard, desc: '概览与快速入口' },
-    { key: 'review' as TabKey, label: '代码审查', icon: FileCode, desc: 'AI 代码审查分析' },
+    { key: 'review' as TabKey, label: '代码审查', icon: GitPullRequest, desc: 'AI 代码审查分析' },
     { key: 'chat' as TabKey, label: '对话工作台', icon: MessageSquare, desc: '智能问答与深度分析' },
     { key: 'pdf-upload' as TabKey, label: 'PDF 规范', icon: FileUp, desc: '上传管理规范文档' },
   ]

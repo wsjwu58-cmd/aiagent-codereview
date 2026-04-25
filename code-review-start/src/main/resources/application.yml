@@ -66,6 +66,15 @@ code-review:
     heartbeat-interval-ms: 30000
   memory:
     window-size: 20
+  rag:
+    chunking:
+      semantic-enabled: ${CODE_REVIEW_RAG_SEMANTIC_CHUNKING_ENABLED:true}
+      semantic-breakpoint-threshold: ${CODE_REVIEW_RAG_SEMANTIC_BREAKPOINT_THRESHOLD:0.58}
+    hybrid:
+      enabled: ${CODE_REVIEW_RAG_HYBRID_ENABLED:true}
+      collection-name: ${CODE_REVIEW_RAG_HYBRID_COLLECTION:}
+    rerank:
+      enabled: ${CODE_REVIEW_RAG_RERANK_ENABLED:true}
   pdf:
     author: ${CODE_REVIEW_PDF_AUTHOR:智能代码审查系统}
   local-code:

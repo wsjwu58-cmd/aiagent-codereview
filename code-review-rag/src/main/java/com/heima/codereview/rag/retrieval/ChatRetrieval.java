@@ -17,13 +17,16 @@ public class ChatRetrieval {
     private final MilvusRepository milvusRepository;
     private final HybridSearch hybridSearch;
     private final QueryRewriter queryRewriter;
+    private final ReviewReranker reviewReranker;
 
     public ChatRetrieval(MilvusRepository milvusRepository,
                          HybridSearch hybridSearch,
-                         QueryRewriter queryRewriter) {
+                         QueryRewriter queryRewriter,
+                         ReviewReranker reviewReranker) {
         this.milvusRepository = milvusRepository;
         this.hybridSearch = hybridSearch;
         this.queryRewriter = queryRewriter;
+        this.reviewReranker = reviewReranker;
     }
 
     public List<ReviewRecord> retrieve(String query) {
@@ -40,15 +43,14 @@ public class ChatRetrieval {
         }
         List<String> expandedQueries = queryRewriter.rewrite(query);
         Map<String, ReviewRecord> merged = new LinkedHashMap<>();
+        int candidateLimit = Math.max(topK * 3, topK);
 
         for (String expandedQuery : expandedQueries) {
-            List<ReviewRecord> results = hybridSearch.search(expandedQuery, projectId, sessionId, topK);
+            List<ReviewRecord> results = hybridSearch.search(expandedQuery, projectId, sessionId, candidateLimit);
             results.forEach(record -> merged.putIfAbsent(record.id(), record));
         }
 
-        return new ArrayList<>(merged.values()).stream()
-                .limit(Math.max(1, topK))
-                .toList();
+        return reviewReranker.rerank(query, new ArrayList<>(merged.values()), Math.max(1, topK));
     }
 
     public List<ReviewRecord> latest(String projectId, String sessionId, int limit) {

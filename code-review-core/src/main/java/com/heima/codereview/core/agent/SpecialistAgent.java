@@ -4,25 +4,38 @@ import com.heima.codereview.common.utils.IdUtils;
 import com.heima.codereview.core.agent.conversational.ConversationContext;
 import com.heima.codereview.core.agent.conversational.ReactStreamListener;
 import com.heima.codereview.core.agent.conversational.SpecialistExecutionResult;
+import com.heima.codereview.core.agent.loop.AgentLoop;
 import com.heima.codereview.core.agent.planning.IntentAnalysisResult;
 import com.heima.codereview.core.agent.planning.IntentType;
 import com.heima.codereview.core.agent.planning.ReflectionResult;
 import com.heima.codereview.core.agent.planning.SubTask;
-import com.heima.codereview.core.agent.react.ReactLoop;
+import com.heima.codereview.core.agent.reflection.KeywordReflectionEvaluator;
+import com.heima.codereview.core.agent.reflection.ReflectionEvaluator;
 import com.heima.codereview.core.agent.specialized.SpecializedAgent;
 import com.heima.codereview.tools.mcp.McpClient;
 import com.heima.codereview.tools.mcp.McpToolExecutor;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
-import java.util.Locale;
 
 public abstract class SpecialistAgent extends SpecializedAgent implements SelfReflection {
+
+    private static final int MAX_REFLECTION_DEPTH = 2;
+
+    private final ReflectionEvaluator reflectionEvaluator;
 
     protected SpecialistAgent(AgentTextGenerator textGenerator,
                               ObjectProvider<McpToolExecutor> toolExecutorProvider,
                               ObjectProvider<McpClient> mcpClientProvider) {
+        this(textGenerator, toolExecutorProvider, mcpClientProvider, new KeywordReflectionEvaluator());
+    }
+
+    protected SpecialistAgent(AgentTextGenerator textGenerator,
+                              ObjectProvider<McpToolExecutor> toolExecutorProvider,
+                              ObjectProvider<McpClient> mcpClientProvider,
+                              ReflectionEvaluator reflectionEvaluator) {
         super(textGenerator, toolExecutorProvider, mcpClientProvider);
+        this.reflectionEvaluator = reflectionEvaluator == null ? new KeywordReflectionEvaluator() : reflectionEvaluator;
     }
 
     public abstract String specialty();
@@ -46,9 +59,14 @@ public abstract class SpecialistAgent extends SpecializedAgent implements SelfRe
     public SpecialistExecutionResult executeTask(String userMessage,
                                                  ConversationContext context,
                                                  SubTask task,
-                                                 ReactLoop reactLoop,
+                                                 AgentLoop agentLoop,
                                                  ReactStreamListener listener) {
-        return reactLoop.execute(this, buildTaskPrompt(userMessage, task), context, listener);
+        return agentLoop.execute(new AgentLoop.LoopRequest(
+                this,
+                buildTaskPrompt(userMessage, task),
+                context,
+                listener
+        ));
     }
 
     public List<SubTask> proposeSubTasks(SubTask task, String result, ConversationContext context) {
@@ -60,17 +78,29 @@ public abstract class SpecialistAgent extends SpecializedAgent implements SelfRe
                                     SubTask task,
                                     String executionResult,
                                     ConversationContext context) {
-        if (!requiresFollowUp(executionResult) || task == null || task.depth() >= 2) {
+        if (task == null || task.depth() >= MAX_REFLECTION_DEPTH) {
+            return ReflectionResult.ok();
+        }
+        ReflectionEvaluator.ReflectionEvaluation evaluation = reflectionEvaluator.evaluate(
+                new ReflectionEvaluator.ReflectionContext(
+                        specialistId(),
+                        originalIntent,
+                        task,
+                        executionResult,
+                        context
+                )
+        );
+        if (evaluation.satisfied()) {
             return ReflectionResult.ok();
         }
         SubTask remediation = task.nextDepth(
                 IdUtils.withPrefix("task"),
                 task.intentType(),
                 task.title() + " follow-up",
-                "Close the remaining gap for: " + task.description(),
+                buildRemediationDescription(task, evaluation),
                 specialistId()
         );
-        return ReflectionResult.gap("The current answer is incomplete or lacks evidence.", List.of(remediation));
+        return ReflectionResult.gap(evaluation.gapDescription(), List.of(remediation));
     }
 
     protected String buildTaskPrompt(String userMessage, SubTask task) {
@@ -92,13 +122,10 @@ public abstract class SpecialistAgent extends SpecializedAgent implements SelfRe
         );
     }
 
-    protected boolean requiresFollowUp(String output) {
-        String normalized = output == null ? "" : output.toLowerCase(Locale.ROOT);
-        return normalized.isBlank()
-                || normalized.contains("insufficient")
-                || normalized.contains("缺少")
-                || normalized.contains("无法")
-                || normalized.contains("unavailable")
-                || normalized.contains("需要更多");
+    private String buildRemediationDescription(SubTask task, ReflectionEvaluator.ReflectionEvaluation evaluation) {
+        if (!evaluation.improvementSuggestions().isEmpty()) {
+            return String.join("\n", evaluation.improvementSuggestions());
+        }
+        return "Close the remaining gap for: " + task.description();
     }
 }

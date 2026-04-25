@@ -4,6 +4,8 @@ import com.heima.codereview.core.agent.conversational.ConversationContext;
 import com.heima.codereview.core.agent.conversational.ReactStreamListener;
 import com.heima.codereview.core.agent.conversational.SpecialistExecutionResult;
 import com.heima.codereview.core.agent.conversational.SpecialistReport;
+import com.heima.codereview.core.agent.loop.AgentLoop;
+import com.heima.codereview.core.agent.loop.AgentLoop.LoopRequest;
 import com.heima.codereview.core.agent.specialized.SpecializedAgent;
 import org.springframework.stereotype.Service;
 
@@ -11,14 +13,26 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
-public class ReactLoop {
+public class ReactLoop implements AgentLoop {
 
     private static final int MAX_ITERATIONS = 5;
+
+    @Override
+    public String loopType() {
+        return "REACT";
+    }
+
+    @Override
+    public SpecialistExecutionResult execute(LoopRequest request) {
+        return execute(request.agent(), request.taskPrompt(), request.context(), request.listener());
+    }
 
     public SpecialistExecutionResult execute(SpecializedAgent agent,
                                              String userMessage,
                                              ConversationContext context,
                                              ReactStreamListener listener) {
+        ReactStreamListener safeListener = listener == null ? new ReactStreamListener() {
+        } : listener;
         List<ThinkingStep> steps = new ArrayList<>();
         List<ToolCallResult> toolResults = new ArrayList<>();
         ReactContext reactContext = new ReactContext(userMessage, context);
@@ -36,7 +50,7 @@ public class ReactLoop {
                             + safe(decision.thought(), "collect more evidence and decide the next action")
             );
             steps.add(thought);
-            listener.onStep(thought);
+            safeListener.onStep(thought);
 
             if (decision.action() != ReactDecision.Action.TOOL || decision.toolName().isBlank()) {
                 finalContent = resolveFinalContent(agent, userMessage, reactContext, toolResults, decision.finalAnswer());
@@ -60,7 +74,7 @@ public class ReactLoop {
                         "Skipping " + decision.toolName() + " - relevant data already retrieved. Using existing results to analyze."
                 );
                 steps.add(skipThought);
-                listener.onStep(skipThought);
+                safeListener.onStep(skipThought);
 
                 String analysis = agent.generateAnalysis(userMessage, reactContext, toolResults);
                 finalContent = analysis != null ? analysis : "";
@@ -88,12 +102,12 @@ public class ReactLoop {
                     toolResult.output()
             );
             steps.add(toolStep);
-            listener.onStep(toolStep);
+            safeListener.onStep(toolStep);
 
             String observationText = agent.observeToolResult(toolResult, reactContext, state);
             ThinkingStep observation = ThinkingStep.observation(agent.getId(), agent.getName(), observationText);
             steps.add(observation);
-            listener.onStep(observation);
+            safeListener.onStep(observation);
 
             int consecutiveNoProgress = isLowValueObservation(toolResult)
                     || state.hasToolCall(toolResult.toolName(), toolResult.input())
@@ -145,7 +159,7 @@ public class ReactLoop {
                 || !finalContent.equals(steps.get(steps.size() - 1).content())) {
             ThinkingStep finalObservation = ThinkingStep.observation(agent.getId(), agent.getName(), finalContent);
             steps.add(finalObservation);
-            listener.onStep(finalObservation);
+            safeListener.onStep(finalObservation);
         }
 
         return new SpecialistExecutionResult(steps, new SpecialistReport(agent.getId(), agent.getName(), finalContent));

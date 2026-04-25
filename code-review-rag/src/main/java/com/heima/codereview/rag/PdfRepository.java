@@ -6,6 +6,7 @@ import com.heima.codereview.common.model.norm.NormUploadResult;
 import com.heima.codereview.common.model.norm.PdfPageContent;
 import com.heima.codereview.common.utils.IdUtils;
 import com.heima.codereview.rag.embedding.PdfExtractor;
+import com.heima.codereview.rag.embedding.TextChunker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -32,13 +33,15 @@ public class PdfRepository {
 
     private final MilvusVectorStore vectorStore;
     private final PdfExtractor pdfExtractor;
+    private final TextChunker textChunker;
     private final Map<String, NormSummary> catalog = new ConcurrentHashMap<>();
     private final Map<String, List<NormRecord>> pageStore = new ConcurrentHashMap<>();
     private final Map<String, List<String>> fileDocumentIds = new ConcurrentHashMap<>();
 
-    public PdfRepository(MilvusVectorStore vectorStore, PdfExtractor pdfExtractor) {
+    public PdfRepository(MilvusVectorStore vectorStore, PdfExtractor pdfExtractor, TextChunker textChunker) {
         this.vectorStore = vectorStore;
         this.pdfExtractor = pdfExtractor;
+        this.textChunker = textChunker;
     }
 
     public NormUploadResult uploadPdf(InputStream pdfStream, String fileName, Map<String, Object> metadata) {
@@ -83,7 +86,7 @@ public class PdfRepository {
                     Map.copyOf(docMetadata)
             ));
 
-            List<String> chunks = splitIntoChunks(safeText(page.text()), MAX_CHUNK_LENGTH);
+            List<String> chunks = textChunker.chunk(safeText(page.text()), MAX_CHUNK_LENGTH, 100, TextChunker.ChunkProfile.PDF);
             for (int i = 0; i < chunks.size(); i++) {
                 String chunkId = IdUtils.compactUuid();
                 documentIds.add(chunkId);
