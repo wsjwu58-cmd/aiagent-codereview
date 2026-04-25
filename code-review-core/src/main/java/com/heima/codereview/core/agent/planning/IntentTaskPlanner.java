@@ -8,19 +8,86 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * 意图分析与任务规划器
+ * 支持关键词快速预筛 + LLM细粒度分类
+ */
 @Component
 public class IntentTaskPlanner {
+
+    // 复杂度阈值，超过则使用LLM进行任务规划
+    private static final int COMPLEXITY_THRESHOLD = 40;
+
+    private final LlmIntentClassifier intentClassifier;
+    private final LlmTaskPlanner taskPlanner;
+
+    public IntentTaskPlanner(LlmIntentClassifier intentClassifier, LlmTaskPlanner taskPlanner) {
+        this.intentClassifier = intentClassifier;
+        this.taskPlanner = taskPlanner;
+    }
+
+    /**
+     * 分析用户意图
+     * @param forceReview 是否强制审查模式
+     */
+    public IntentAnalysisResult analyzeIntent(String userMessage, ConversationContext context, boolean forceReview) {
+        // 有仓库上下文时使用LLM分类
+        if (forceReview || (context != null && context.hasRepositoryContext())) {
+            return analyzeWithLLM(userMessage, context, forceReview);
+        }
+        // 简单请求使用关键词匹配
+        return analyzeWithKeywords(userMessage, context, forceReview);
+    }
 
     public IntentAnalysisResult analyzeIntent(String userMessage, ConversationContext context) {
         return analyzeIntent(userMessage, context, false);
     }
 
-    public IntentAnalysisResult analyzeIntent(String userMessage, ConversationContext context, boolean forceReview) {
+    /** 使用LLM进行意图分析 */
+    private IntentAnalysisResult analyzeWithLLM(String userMessage, ConversationContext context, boolean forceReview) {
+        IntentClassification classification = intentClassifier.analyze(userMessage, context);
+
+        IntentType primary = classification.primary();
+        List<IntentType> intents = new ArrayList<>(classification.candidates());
+
+        if (!intents.contains(primary)) {
+            intents.add(0, primary);
+        }
+
+        // 计算复杂度分数
+        int complexityScore = Math.min(100,
+                15 + intents.size() * 20
+                + (context != null && context.hasRepositoryContext() ? 15 : 0)
+                + (hasRelevantNorms(context) ? 10 : 0)
+                + (classification.confidence() < 0.7 ? 15 : 0));
+
+        boolean requiresRepositoryContext = forceReview || classification.requiresRepository()
+                || primary == IntentType.CODE_REVIEW
+                || primary == IntentType.ARCHITECTURE_ANALYSIS;
+
+        boolean requiresReflection = complexityScore >= 30 || intents.size() > 1;
+        boolean requiresBacktracking = complexityScore >= 50 || intents.size() > 2;
+
+        String rationale = "Intent=" + primary
+                + ", candidates=" + intents
+                + ", confidence=" + classification.confidence()
+                + ", llmClassified=true";
+
+        return new IntentAnalysisResult(
+                primary, intents, complexityScore,
+                requiresRepositoryContext, requiresReflection, requiresBacktracking,
+                rationale
+        );
+    }
+
+    /** 使用关键词进行意图分析 */
+    private IntentAnalysisResult analyzeWithKeywords(String userMessage, ConversationContext context, boolean forceReview) {
         ConversationContext safeContext = context == null
                 ? new ConversationContext("", "", "", "", "", "", "", List.of(), List.of(), List.of(), List.of())
                 : context;
         String normalized = safe(userMessage).toLowerCase(Locale.ROOT);
         List<IntentType> intents = new ArrayList<>();
+
         if (forceReview || containsAny(normalized, "review", "审查", "代码质量", "重构", "diff")) {
             intents.add(IntentType.CODE_REVIEW);
         }
@@ -33,7 +100,7 @@ public class IntentTaskPlanner {
         if (containsAny(normalized, "architecture", "架构", "设计", "分层", "模块", "依赖")) {
             intents.add(IntentType.ARCHITECTURE_ANALYSIS);
         }
-        if (containsAny(normalized, "document", "文档", "readme", "注释", "api 文档", "说明")) {
+        if (containsAny(normalized, "document", "文档", "readme", "注释", "api文档", "说明")) {
             intents.add(IntentType.DOCUMENTATION_GENERATION);
         }
         if (containsAny(normalized, "规范", "标准", "guideline", "best practice", "历史", "memory")) {
@@ -46,25 +113,25 @@ public class IntentTaskPlanner {
                 intents.add(IntentType.GENERAL_CODING);
             }
         }
+
         IntentType primaryIntent = intents.get(0);
-        //对任务复杂度进行打分
         int complexityScore = Math.min(100,
                 15 + intents.size() * 20 + (safeContext.hasRepositoryContext() ? 15 : 0) + (hasRelevantNorms(safeContext) ? 10 : 0));
-        //判断是否需要代码上下文
         boolean requiresRepositoryContext = forceReview
                 || primaryIntent == IntentType.CODE_REVIEW
                 || primaryIntent == IntentType.ARCHITECTURE_ANALYSIS
                 || primaryIntent == IntentType.DOCUMENTATION_GENERATION
                 || safeContext.hasRepositoryContext();
-        //根据任务打分判断是否需要进行反思和任务回溯
         boolean requiresReflection = complexityScore >= 30 || intents.size() > 1;
         boolean requiresBacktracking = complexityScore >= 50 || intents.size() > 2;
-        //生成解释理由返回
         String rationale = "Intent=" + primaryIntent + ", candidates=" + intents + ", repositoryContext=" + safeContext.hasRepositoryContext();
         return new IntentAnalysisResult(primaryIntent, intents, complexityScore, requiresRepositoryContext, requiresReflection, requiresBacktracking, rationale);
     }
 
-    //任务分解与创建
+    /**
+     * 任务分解
+     * @deprecated 对于复杂请求，建议使用 planTasks() 方法进行LLM自主规划
+     */
     public List<SubTask> decomposeTask(IntentAnalysisResult intent, ConversationContext context) {
         if (intent == null) {
             return List.of();
@@ -89,11 +156,21 @@ public class IntentTaskPlanner {
         return tasks;
     }
 
-    //初始化任务列表
+    /**
+     * 构建初始任务列表
+     * @deprecated 对于复杂请求，建议使用 planTasks() 方法
+     */
     public List<SubTask> buildInitialTasks(IntentAnalysisResult intent) {
         if (intent == null) {
             return List.of();
         }
+
+        // 复杂请求由FlowAgent调用planTasks进行LLM规划
+        if (intent.complexityScore() >= COMPLEXITY_THRESHOLD && taskPlanner != null) {
+            return List.of();
+        }
+
+        // 简单请求使用模板
         List<SubTask> tasks = new ArrayList<>();
         IntentType primary = intent.primaryIntent();
         tasks.add(createPrimaryTask(primary));
@@ -106,6 +183,20 @@ public class IntentTaskPlanner {
             }
         }
         return tasks;
+    }
+
+    /**
+     * 使用LLM进行任务规划
+     * @param userMessage 用户原始请求
+     * @param context 对话上下文
+     * @param intent 意图分析结果
+     * @param maxTasks 最大任务数
+     */
+    public PlannedTasks planTasks(String userMessage, ConversationContext context, IntentAnalysisResult intent, int maxTasks) {
+        if (taskPlanner == null || intent == null) {
+            return PlannedTasks.empty();
+        }
+        return taskPlanner.plan(userMessage, context, intent, maxTasks);
     }
 
     public boolean isParallelizable(IntentType intentType) {

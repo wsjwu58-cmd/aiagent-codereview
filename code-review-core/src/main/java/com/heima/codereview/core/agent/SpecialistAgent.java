@@ -10,6 +10,7 @@ import com.heima.codereview.core.agent.planning.IntentType;
 import com.heima.codereview.core.agent.planning.ReflectionResult;
 import com.heima.codereview.core.agent.planning.SubTask;
 import com.heima.codereview.core.agent.reflection.KeywordReflectionEvaluator;
+import com.heima.codereview.core.agent.reflection.LlmReflectionEvaluator;
 import com.heima.codereview.core.agent.reflection.ReflectionEvaluator;
 import com.heima.codereview.core.agent.specialized.SpecializedAgent;
 import com.heima.codereview.tools.mcp.McpClient;
@@ -27,7 +28,9 @@ public abstract class SpecialistAgent extends SpecializedAgent implements SelfRe
     protected SpecialistAgent(AgentTextGenerator textGenerator,
                               ObjectProvider<McpToolExecutor> toolExecutorProvider,
                               ObjectProvider<McpClient> mcpClientProvider) {
-        this(textGenerator, toolExecutorProvider, mcpClientProvider, new KeywordReflectionEvaluator());
+        // 默认优先使用LLM评估器，LLM不可用时降级到关键词评估器
+        this(textGenerator, toolExecutorProvider, mcpClientProvider,
+             new LlmReflectionEvaluator(textGenerator, new KeywordReflectionEvaluator()));
     }
 
     protected SpecialistAgent(AgentTextGenerator textGenerator,

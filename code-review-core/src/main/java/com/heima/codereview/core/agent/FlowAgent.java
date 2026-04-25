@@ -11,9 +11,12 @@ import com.heima.codereview.core.agent.execution.ParallelExecutor;
 import com.heima.codereview.core.agent.loop.AgentLoop;
 import com.heima.codereview.core.agent.planning.BacktrackingPlanner;
 import com.heima.codereview.core.agent.planning.ExecutionHistory;
+import com.heima.codereview.core.agent.planning.ExecutionStrategy;
 import com.heima.codereview.core.agent.planning.IntentAnalysisResult;
 import com.heima.codereview.core.agent.planning.IntentTaskPlanner;
 import com.heima.codereview.core.agent.planning.IntentType;
+import com.heima.codereview.core.agent.planning.PlannedTask;
+import com.heima.codereview.core.agent.planning.PlannedTasks;
 import com.heima.codereview.core.agent.planning.ReflectionResult;
 import com.heima.codereview.core.agent.planning.SubTask;
 import com.heima.codereview.core.agent.planning.TaskExecutionResult;
@@ -41,6 +44,8 @@ public class FlowAgent extends BaseAgent {
     private static final int MAX_PLANNED_TASKS = 6;
     private static final int MAX_TASK_DEPTH = 3;
     private static final int PARALLEL_TIMEOUT_SECONDS = 120;
+    // 超过此阈值则使用LLM进行任务规划
+    private static final int COMPLEXITY_THRESHOLD = 40;
 
     private final ReviewSpecialistAgent reviewSpecialistAgent;
     private final SimpleAgent simpleAgent;
@@ -98,14 +103,25 @@ public class FlowAgent extends BaseAgent {
         List<ThinkingStep> allSteps = new ArrayList<>();
 
         List<SubTask> initialTasks = buildInitialTasks(intent);
-        //将代码审查任务过滤出来作为主任务
-        List<SubTask> supplementalTasks = initialTasks.stream()
-                .filter(task -> task.intentType() != IntentType.CODE_REVIEW)
-                .toList();
 
-        //并行执行任务
-        if (!supplementalTasks.isEmpty()) {
-            parallelReports = runParallelSpecialists(supplementalTasks, userMessage, conversationContext, intent, createBridgeListener(sessionId, listener), parallelResults, allTaskResults, allSteps);
+        // 复杂请求使用LLM规划的任务
+        if (intent.complexityScore() >= COMPLEXITY_THRESHOLD) {
+            PlannedTasks planned = intentTaskPlanner.planTasks(
+                    userMessage, conversationContext, intent, MAX_PLANNED_TASKS);
+
+            if (!planned.tasks().isEmpty()) {
+                executePlannedTasks(planned, userMessage, conversationContext, intent, listener,
+                        parallelReports, parallelResults, allTaskResults, allSteps);
+            }
+        } else {
+            // 简单请求使用模板方式
+            List<SubTask> supplementalTasks = initialTasks.stream()
+                    .filter(task -> task.intentType() != IntentType.CODE_REVIEW)
+                    .toList();
+
+            if (!supplementalTasks.isEmpty()) {
+                parallelReports = runParallelSpecialists(supplementalTasks, userMessage, conversationContext, intent, createBridgeListener(sessionId, listener), parallelResults, allTaskResults, allSteps);
+            }
         }
 
         ReviewSpecialistOutcome primaryOutcome = runStructuredReview(context, listener, result, allTaskResults);
@@ -249,6 +265,70 @@ public class FlowAgent extends BaseAgent {
 
     private List<SubTask> buildInitialTasks(IntentAnalysisResult intent) {
         return intentTaskPlanner.buildInitialTasks(intent);
+    }
+
+    /**
+     * 执行LLM规划的任务
+     * 根据执行策略决定并行或串行执行
+     */
+    private void executePlannedTasks(PlannedTasks planned,
+                                     String userMessage,
+                                     ConversationContext context,
+                                     IntentAnalysisResult intent,
+                                     ReactStreamListener listener,
+                                     List<SpecialistReport> parallelReports,
+                                     List<SpecialistExecutionResult> parallelResults,
+                                     List<TaskExecutionResult> allTaskResults,
+                                     List<ThinkingStep> allSteps) {
+        List<SubTask> subTasks = convertToSubTasks(planned.tasks());
+
+        switch (planned.strategy()) {
+            case PARALLEL:
+                // 无依赖的任务并行执行
+                List<SubTask> parallelTasks = subTasks.stream()
+                        .filter(t -> t.dependencies() == null || t.dependencies().isEmpty())
+                        .toList();
+                if (!parallelTasks.isEmpty()) {
+                    parallelReports = runParallelSpecialists(parallelTasks, userMessage, context, intent, listener, parallelResults, allTaskResults, allSteps);
+                }
+                // 串行执行有依赖的任务
+                List<SubTask> sequentialTasks = subTasks.stream()
+                        .filter(t -> t.dependencies() != null && !t.dependencies().isEmpty())
+                        .toList();
+                if (!sequentialTasks.isEmpty()) {
+                    PlanningExecution execution = runPlannerSequential(
+                            userMessage, context, intent, sequentialTasks, listener, new ExecutionHistory(), MAX_PLANNED_TASKS);
+                    parallelReports.addAll(execution.reports());
+                    allTaskResults.addAll(execution.taskResults());
+                    allSteps.addAll(execution.steps());
+                }
+                break;
+            case MIXED:
+            case SEQUENTIAL:
+            default:
+                // 全部串行执行
+                PlanningExecution execution = runPlannerSequential(
+                        userMessage, context, intent, subTasks, listener, new ExecutionHistory(), MAX_PLANNED_TASKS);
+                parallelReports = execution.reports();
+                allTaskResults = execution.taskResults();
+                allSteps = execution.steps();
+                break;
+        }
+    }
+
+    /** 将PlannedTask转换为SubTask */
+    private List<SubTask> convertToSubTasks(List<PlannedTask> plannedTasks) {
+        return plannedTasks.stream()
+                .map(pt -> SubTask.of(
+                        pt.id(),
+                        pt.intentType(),
+                        pt.title(),
+                        pt.description(),
+                        pt.agentId(),
+                        pt.priority() - 1,  // priority 1-5 转为 depth
+                        ""
+                ))
+                .toList();
     }
 
     private List<SpecialistReport> runParallelSpecialists(List<SubTask> tasks,
