@@ -124,6 +124,7 @@ public class FlowAgent extends BaseAgent {
             }
         }
 
+        //串行执行
         ReviewSpecialistOutcome primaryOutcome = runStructuredReview(context, listener, result, allTaskResults);
 
         List<SpecialistReport> reports = new ArrayList<>(parallelReports);
@@ -143,6 +144,7 @@ public class FlowAgent extends BaseAgent {
         }
 
         ExecutionHistory history = new ExecutionHistory();
+        //执行后续任务
         PlanningExecution followupExecution = runPlannerSequential(
                 userMessage,
                 conversationContext,
@@ -182,6 +184,7 @@ public class FlowAgent extends BaseAgent {
         return result;
     }
 
+    //串行执行审查链
     private ReviewSpecialistOutcome runStructuredReview(AgentExecutionContext context,
                                                         AgentEventListener listener,
                                                         FlowResult result,
