@@ -4,3 +4,4 @@
 /code-review-core/target/
 /code-review-rag/target/
 /code-review-tools/target/
+deploy/.env

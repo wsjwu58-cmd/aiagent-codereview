@@ -778,28 +778,131 @@ Content-Type: application/json
 
 ## 快速开始
 
-### 环境要求
+### 方式一：Docker 部署（推荐）
+
+使用 Docker Compose 一键部署所有服务（MySQL、Redis、Milvus、后端、Nginx）。
+
+#### 环境要求
+
+- Docker 20.10+
+- Docker Compose 2.0+
+
+#### 1. 克隆项目
+
+```bash
+git clone https://github.com/wsjwu58-cmd/AIAgent-codeReview.git
+cd AIAgent-codeReview
+```
+
+#### 2. 配置环境变量
+
+复制模板文件并修改配置：
+
+```bash
+cp deploy/env.txt deploy/.env
+```
+
+编辑 `deploy/.env`，填入你的 API Key：
+
+```env
+OPENAI_BASE_URL=https://api.siliconflow.cn   # LLM API 地址
+OPENAI_API_KEY=sk-your-api-key-here           # 替换为你的 API Key
+OPENAI_CHAT_MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct
+OPENAI_EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+WEB_SEARCH_API_KEY=tvly-your-api-key-here     # Tavily 搜索 API Key
+```
+
+#### 3. 构建并启动
+
+```bash
+# 构建后端 JAR 包
+mvn clean package -DskipTests
+
+# 启动所有服务
+cd deploy
+docker compose up -d
+```
+
+#### 4. 访问服务
+
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 前端页面 | `http://localhost` | Nginx 反向代理 |
+| 后端 API | `http://localhost:8080` | Spring Boot 后端 |
+| MySQL | `localhost:3306` | root / qwer1234 |
+| Redis | `localhost:6379` | 密码: qwer1234 |
+| Milvus | `localhost:19530` | 向量数据库 |
+
+#### 服务架构
+
+```
+                    ┌─────────────────────┐
+                    │    Nginx (:80)      │
+                    │ 前端静态文件 + API代理│
+                    └─────────┬───────────┘
+                              │ /api/  /ws
+                    ┌─────────▼───────────┐
+                    │  Backend (:8080)    │
+                    │  Spring Boot 后端    │
+                    └───┬─────┬───────┬───┘
+                        │     │       │
+              ┌─────────▼┐ ┌──▼──┐ ┌──▼──────┐
+              │ MySQL    │ │Redis│ │ Milvus  │
+              │ (:3306)  │ │(:6379)│ │(:19530)│
+              └──────────┘ └─────┘ └─────────┘
+```
+
+#### 常用命令
+
+```bash
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f backend
+
+# 重启服务
+docker compose restart backend
+
+# 停止所有服务
+docker compose down
+
+# 停止并删除数据卷
+docker compose down -v
+```
+
+#### 目录结构
+
+```
+deploy/
+├── docker-compose.yml          # 服务编排配置
+├── env.txt                     # 环境变量模板（不含敏感信息）
+├── .env                        # 实际环境变量（需自行创建，已在.gitignore中忽略）
+├── init-sql/
+│   └── 01-init-schema.sql      # 数据库初始化脚本
+├── backend/
+│   └── Dockerfile              # 后端镜像构建
+└── nginx/
+    ├── Dockerfile              # Nginx镜像构建（含前端构建）
+    └── nginx.conf              # Nginx配置（API代理 + WebSocket）
+```
+
+### 方式二：手动部署
+
+#### 环境要求
 
 - JDK 17+
 - Node.js 18+
 - MySQL 8.0
 - Redis 7.0
-- Milvus 3.0 (可选，使用内置向量检索)
 
-### 1. 克隆项目
-
-```bash
-git clone https://github.com/your-org/code-review-agent.git
-cd code-review-agent
-```
-
-### 2. 配置数据库
+#### 1. 配置数据库
 
 ```yaml
 # application.yml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/code_review?useSSL=false&serverTimezone=UTC
+    url: jdbc:mysql://localhost:3306/code_review_agent?useSSL=false&serverTimezone=Asia/Shanghai
     username: root
     password: your_password
   redis:
@@ -807,7 +910,7 @@ spring:
     port: 6379
 ```
 
-### 3. 配置API Key
+#### 2. 配置 API Key
 
 ```yaml
 # application.yml
@@ -817,14 +920,14 @@ spring:
       api-key: your-api-key
 ```
 
-### 4. 启动后端
+#### 3. 启动后端
 
 ```bash
 cd code-review-start
 mvn spring-boot:run
 ```
 
-### 5. 启动前端
+#### 4. 启动前端
 
 ```bash
 cd front
